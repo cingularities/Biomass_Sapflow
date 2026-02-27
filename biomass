@@ -1,0 +1,927 @@
+
+
+library(lidR)
+library(VoxR)
+library(data.table)
+library(geometry)
+library(stringr)
+library(tidyverse)
+library(sf)
+
+Packages <- c('lidR','data.table','geometry','VoxR','stringr','tidyverse','readxl',"dplR","dplyr","sf", "lidR", "sf","tibble","ggplot2","tidyverse",'spanner')
+lapply(Packages, library, character.only = TRUE)
+
+setwd("//snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/")
+gc()
+options(scipen = 100, digits = 4)
+############################################ Tree Ring and Ground Fusion ####################################################
+#SET the path for folder where you have the file stored, each function will load the data format
+groundA =   readxl::read_excel('//snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/data/NorthAmerica Data/MtBigelow_Metadata/MtBigelow_Metadata/metadata_MtBigelow_Spring_2022.xlsx', sheet=1)
+groundB =   readxl::read_excel('//snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/data/NorthAmerica Data/MtBigelow_Metadata/MtBigelow_Metadata/metadata_MtBigelow_Spring_2022.xlsx', sheet=2)
+groundC =   readxl::read_excel('//snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/data/NorthAmerica Data/MtBigelow_Metadata/MtBigelow_Metadata/metadata_MtBigelow_Spring_2022.xlsx', sheet=3) 
+
+
+##RAW GROUND DATA
+MBA_coor <-c(-110.72624,32.41585) 	
+MBB_coor <-c(-110.72578,32.41596) 	
+MBC_coor <-c(-110.72517,32.41548) 	
+
+
+
+
+
+
+###FUNCTION 2 - ground data azimuth and distance to coordinates###
+ground_parse <- function(coor, ground) { #read xlsx ground metadata file
+  dist_azim <- ground
+  coor_list <- list() #creates empty list for new coordinates
+  
+  for (i in 1:nrow(dist_azim)) { #for loop to create a lat long for each azimuth and distance from plot center lat and lon
+    stemAzimuth <- dist_azim$Azimuth[i] #grab azimuth
+    stemDistance <- dist_azim$Distance[i] #grab distance
+    
+    new_coordinates <- geosphere::destPoint(coor, stemAzimuth,  stemDistance) %>% #estimates new lat lon coordinate
+      as.data.frame() %>% #make as data frame
+      add_column(treeID = dist_azim$treeID[i]) %>% #add treeID column of that tree
+      add_column(stemAzimuth = stemAzimuth) %>% #add Azimuth column of that tree
+      add_column(stemDistance = stemDistance) %>% #add Distance column of that tree
+      add_column(species = dist_azim$Species[i]) %>% #add Species column of that tree
+      add_column(Height = dist_azim$Height[i])%>% #add Height column of that tree
+      add_column(DBH = dist_azim$DBH[i]) #add DBH column of that tree
+    
+    
+    coor_list[[i]] <- new_coordinates #put result of loop in list
+    
+  }
+  
+  coor_df<- coor_list %>% bind_rows() %>% na.omit() #remove NA rows
+  
+  
+  return(coor_df)
+}
+
+MBA_ground <- ground_parse(MBA_coor, groundA) 
+MBB_ground <- ground_parse(MBB_coor, groundB) 
+MBC_ground <- ground_parse(MBC_coor, groundC) 
+
+
+
+##Creating ground SPATIALPOINTS
+###tree_ring_ground_spatialpoints
+#Conversion of data frame to sf object
+MBA_xy_ground <- st_as_sf(x = MBA_ground,                         
+                          coords = c("lon", "lat"),
+                          crs = "+proj=longlat +ellps=WGS84 +datum=WGS84")
+#Projection transformation
+MBA_tree.points.ground = st_transform(MBA_xy_ground, crs = "+proj=utm +zone=12 +datum=WGS84 +units=m +no_defs")
+#Convert it to data frame
+MBA_tree.points.ground_df <- MBA_tree.points.ground %>% as.data.frame() %>%
+  mutate(X = unlist(map(geometry,1)),
+         Y = unlist(map(geometry,2)))
+###write_sf(MBA_tree.points.ground, "MBA_tree_points_ground.shp")
+###write.csv(MBA_tree.points.ground_df, "MBA_tree_points_ground.csv")
+
+##SPATIALPOINTS
+###tree_ring_ground_spatialpoints
+#Conversion of data frame to sf object
+MBB_xy_ground <- st_as_sf(x = MBB_ground,                         
+                          coords = c("lon", "lat"),
+                          crs = "+proj=longlat +ellps=WGS84 +datum=WGS84")
+#Projection transformation
+MBB_tree.points.ground = st_transform(MBB_xy_ground, crs = "+proj=utm +zone=12 +datum=WGS84 +units=m +no_defs")
+#Convert it to data frame
+MBB_tree.points.ground_df <- MBB_tree.points.ground %>% as.data.frame() %>%
+  mutate(X = unlist(map(geometry,1)),
+         Y = unlist(map(geometry,2)))
+###write_sf(MBB_tree.points.ground, "MBB_tree_points_ground.shp")
+###write.csv(MBB_tree.points.ground_df, "MBB_tree_points_ground.csv")
+
+
+##SPATIALPOINTS
+###tree_ring_ground_spatialpoints
+#Conversion of data frame to sf object
+MBC_xy_ground <- st_as_sf(x = MBC_ground,                         
+                          coords = c("lon", "lat"),
+                          crs = "+proj=longlat +ellps=WGS84 +datum=WGS84")
+#Projection transformation
+MBC_tree.points.ground = st_transform(MBC_xy_ground, crs = "+proj=utm +zone=12 +datum=WGS84 +units=m +no_defs")
+#Convert it to data frame
+MBC_tree.points.ground_df <- MBC_tree.points.ground %>% as.data.frame() %>%
+  mutate(X = unlist(map(geometry,1)),
+         Y = unlist(map(geometry,2)))
+
+###write_sf(MBC_tree.points.ground, "MBC_tree_points_ground.shp")
+###write.csv(MBB_tree.points.ground_df, "MBB_tree_points_ground.csv")
+
+
+#theisland <- list.files('/gaea/Downloads/',pattern="*.laz$", full.names=TRUE)
+
+
+all_trees_bigelow <- MBA_tree.points.ground_df%>%
+  mutate(site = "MBA") %>%
+  rbind(MBB_tree.points.ground_df %>% mutate(site = "MBB")) %>% 
+  rbind(MBC_tree.points.ground_df %>% mutate(site = "MBC")) %>% 
+  rownames_to_column()%>%rename(ID=rowname) 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+density_measurements <- read_xlsx("//snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/data/Density Measurments Mt Big.xlsx")%>% select(c(1,4))
+density_measurements_summary <- density_measurements %>%
+  mutate(
+    site = substr(`Sample #`, 1, 1),                                   # first letter
+    groundID = as.numeric(gsub("[^0-9]", "", `Sample #`)),            # numbers
+    core = sub(".*([A-Za-z])$", "\\1", `Sample #`)                     # last letter
+  ) %>%
+  group_by(site, groundID) %>%
+  summarise(
+    mean_density = mean(Density, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    site = dplyr::recode(site,
+                         "A" = "MBA",
+                         "B" = "MBB",
+                         "C" = "MBC")
+  )
+density_measurements_summary_species <-density_measurements_summary%>% left_join(all_trees_bigelow)%>%
+  group_by(species) %>%
+  summarise(
+    mean_density = mean(mean_density, na.rm = TRUE),
+    n_samples = n(),
+    .groups = "drop"
+  )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# -------- SETTINGS ----------
+parent_dir <- "//snow.snrenet.arizona.edu/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/data/CH2_LiDAR/segmentedClouds/"
+voxel_size <- 0.1
+dbh_band <- 1
+
+platform_folders <- list.dirs(parent_dir, recursive = FALSE)
+all_results <- list()
+
+for (folder in platform_folders) {
+  
+  las_files <- list.files(folder, pattern = "\\.las$", full.names = TRUE)
+  
+  for (f in las_files) {
+    
+    # ── Parse filename ─────────────────────────────────────────────────────────
+    filename    <- tools::file_path_sans_ext(basename(f))
+    parts       <- str_split(filename, "_", simplify = TRUE)
+    plot_id     <- parts[1]
+    tree_id     <- gsub("tree", "", parts[length(parts)], ignore.case = TRUE)
+    platform_id <- paste(parts[2:(length(parts) - 1)], collapse = "_")
+    
+    # ── Load LAS ───────────────────────────────────────────────────────────────
+    las <- readLAS(f)
+    if (is.empty(las)) next
+    
+    pts <- las@data  # keep as data.table, access as pts$X pts$Y pts$Z
+    if (nrow(pts) < 10) next
+    
+    # ── Height ─────────────────────────────────────────────────────────────────
+    z_min  <- min(pts$Z, na.rm = TRUE)
+    z_max  <- quantile(pts$Z, 0.995, na.rm = TRUE)
+    height <- z_max - z_min
+    mid_z  <- z_min + height / 2
+    
+    # ── Crown Area (2D convex hull on XY) ──────────────────────────────────────
+    crown_area <- NA_real_
+    if (nrow(pts) >= 3) {
+      tryCatch({
+        coords2d   <- as.data.frame(pts[, c("X", "Y")])
+        sf_pts     <- st_as_sf(coords2d, coords = c("X", "Y"))
+        poly       <- st_convex_hull(st_union(sf_pts))
+        crown_area <- as.numeric(st_area(poly))
+      }, error = function(e) message("Crown area error in ", f, ": ", e$message))
+    }
+    
+    # ── Voxel Volume (filled voxels × voxel_size³) ─────────────────────────────
+    total_volume <- NA_real_
+    tryCatch({
+      dt_xyz <- data.table::data.table(pts[, c("X", "Y", "Z")])
+      data.table::setnames(dt_xyz, old = c("X", "Y", "Z"), new = c("x", "y", "z"))
+      
+      voxels       <- VoxR::filled_voxel_cloud(dt_xyz, voxel_size)
+      total_volume <- nrow(voxels) * (voxel_size^3)   # n voxels × voxel volume (m³)
+      
+    }, error = function(e) message("Voxel volume error in ", f, ": ", e$message))
+    # ── Top / Bottom Voxel Density ─────────────────────────────────────────────
+    # FIX: split raw points by mid_z FIRST, then voxelize each half separately.
+    # The old approach filtered vox() output by Z, but vox() returns grid indices
+    # not real coordinates — so the comparison was wrong and produced empty halves.
+    bottom_density <- NA_real_
+    top_density    <- NA_real_
+    
+    tryCatch({
+      pts_bot <- pts[pts$Z <= mid_z, ]
+      pts_top <- pts[pts$Z >  mid_z, ]
+      
+      xrange <- max(pts$X) - min(pts$X)
+      yrange <- max(pts$Y) - min(pts$Y)
+      
+      possible_half <- (xrange / voxel_size) *
+        (yrange / voxel_size) *
+        ((height / 2) / voxel_size)
+      
+      if (possible_half > 0 && nrow(pts_bot) >= 3) {
+        dt_bot         <- data.table::data.table(x = pts_bot$X, y = pts_bot$Y, z = pts_bot$Z)
+        vox_bot        <- vox(dt_bot, res = voxel_size)
+        bottom_density <- nrow(vox_bot) / possible_half
+      }
+      
+      if (possible_half > 0 && nrow(pts_top) >= 3) {
+        dt_top      <- data.table::data.table(x = pts_top$X, y = pts_top$Y, z = pts_top$Z)
+        vox_top     <- vox(dt_top, res = voxel_size)
+        top_density <- nrow(vox_top) / possible_half
+      }
+    }, error = function(e) {})
+    
+    
+    # ── Convex Hull Volume (3D) ────────────────────────────────────────────────
+    hull_volume <- NA_real_
+    tryCatch({
+      pts_mat <- as.matrix(pts[, c("X", "Y", "Z")])
+      # convhulln requires unique, non-degenerate points
+      pts_mat <- unique(pts_mat)
+      if (nrow(pts_mat) >= 4) {
+        hull        <- geometry::convhulln(pts_mat, options = "FA")
+        hull_volume <- hull$vol
+      }
+    }, error = function(e) message("Hull3D volume error in ", f, ": ", e$message))
+    
+    # ── DBH ────────────────────────────────────────────────────────────────────
+    dbh   <- NA_real_
+    slice <- pts[pts$Z > (1.3 - dbh_band) &
+                   pts$Z < (1.3 + dbh_band), ]
+    
+    if (nrow(slice) > 30) {
+      xm  <- mean(slice$X)
+      ym  <- mean(slice$Y)
+      dbh <- 2 * mean(sqrt((slice$X - xm)^2 + (slice$Y - ym)^2)) * 100
+    }
+    
+    # ── Collect ────────────────────────────────────────────────────────────────
+    all_results[[length(all_results) + 1]] <- data.frame(
+      site               = plot_id,
+      Platform           = platform_id,
+      treeID             = tree_id,
+      Height_m           = height,
+      CrownArea_m2       = crown_area,
+      VoxelVolume_m3     = total_volume,
+      HullVolume_m3      = hull_volume,
+      BottomVoxelDensity = bottom_density,
+      TopVoxelDensity    = top_density,
+      DBH_cm             = dbh
+    )
+  }
+}
+
+results_df <- dplyr::bind_rows(all_results)%>%
+  mutate(treeID = as.double(treeID)) %>%
+  left_join(all_trees_bigelow %>% select(treeID, site, species,Height,DBH),
+            by = c("treeID" = "treeID", "site" = "site"))
+
+
+
+
+
+
+
+
+
+final <- results_df %>%
+  arrange(site, treeID) %>%
+  mutate(tree_index = as.integer(factor(paste(site, treeID))))
+
+
+setorder(final, site, treeID, Platform)
+
+write.csv(final, "all_platform_tree_metrics.csv", row.names = FALSE)
+
+
+
+
+# Single pivot keeping tree_index
+final_long <- final %>%
+  select(site, treeID, tree_index, Platform, Height_m, CrownArea_m2, VoxelVolume_m3) %>%
+  pivot_longer(cols = c(Height_m, CrownArea_m2, VoxelVolume_m3),
+               names_to = "metric",
+               values_to = "value")
+
+windows(width = 16, height = 14)
+ggplot(final_long, aes(x = factor(tree_index), y = value, 
+                       group = Platform, color = Platform)) +
+  geom_line(alpha = 0.8, linewidth = 0.8) +
+  geom_point(size = 3) +
+  facet_wrap(~ metric, scales = "free_y", ncol = 1) +
+  scale_color_manual(values = c(
+    "nadir"         = "#2196F3",
+    "nadir_oblique" = "#FF9800",
+    "TLS"           = "#4CAF50",
+    "TLS_UAV"       = "red"
+  )) +
+  labs(title = "Per-tree metrics across platforms",
+       x = "Tree Index", y = "Value", color = "Platform") +
+  theme_bw(base_size = 14) +
+  theme(
+    axis.text.x  = element_text(angle = 45, hjust = 1, size = 11),
+    axis.text.y  = element_text(size = 11),
+    strip.text   = element_text(face = "bold", size = 13),
+    plot.title   = element_text(face = "bold", size = 15),
+    legend.text  = element_text(size = 12)
+  )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+platform_colors <- c("nadir" = "#2196F3", "nadir_oblique" = "#FF9800", "TLS" = "#4CAF50","TLS_UAV" = "red")
+
+
+
+
+
+density_long <- results_df %>%
+  select(treeID, site, Platform, BottomVoxelDensity, TopVoxelDensity) %>%
+  mutate(tree_index = as.integer(factor(paste(site, treeID)))) %>%
+  pivot_longer(cols = c(BottomVoxelDensity, TopVoxelDensity),
+               names_to = "metric",
+               values_to = "value")
+
+windows()
+ggplot(density_long, aes(x = factor(tree_index), y = value,
+                         group = Platform, color = Platform)) +
+  geom_line(alpha = 0.8) +
+  geom_point(size = 2) +
+  facet_wrap(~ metric, ncol = 1) +
+  labs(title = "Voxel density by platform",
+       x = "Tree Index", y = "Density", color = "Platform") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+
+
+density_wide <- results_df %>%
+  select(treeID, site, Platform, BottomVoxelDensity, TopVoxelDensity) %>%
+  mutate(tree_index = as.integer(factor(paste(site, treeID))))
+
+windows()
+ggplot(density_wide, aes(y = factor(tree_index), color = Platform)) +
+  geom_segment(aes(x = BottomVoxelDensity, xend = TopVoxelDensity,
+                   yend = factor(tree_index)),
+               linewidth = 0.8, alpha = 0.7,
+               position = position_dodge(0.6)) +
+  geom_point(aes(x = BottomVoxelDensity, shape = "Bottom"),
+             size = 3, position = position_dodge(0.6)) +
+  geom_point(aes(x = TopVoxelDensity, shape = "Top"),
+             size = 3, position = position_dodge(0.6)) +
+  facet_wrap(~ Platform, ncol = 1) +
+  scale_color_manual(values = platform_colors) +
+  scale_shape_manual(values = c("Bottom" = 16, "Top" = 17), name = "Position") +
+  labs(
+    title    = "Top vs Bottom voxel density per tree by platform",
+    subtitle = "Segment length = density gradient | circle = bottom | triangle = top",
+    x        = "Voxel Density",
+    y        = "Tree Index",
+    color    = "Platform"
+  ) +
+  theme_bw(base_size = 11) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    plot.title = element_text(face = "bold", size = 13)
+  )
+
+
+
+
+density_diff <- results_df %>%
+  select(treeID, site, Platform, BottomVoxelDensity, TopVoxelDensity) %>%
+  left_join(
+    results_df %>%
+      filter(Platform == "TLS") %>%
+      select(treeID, site,
+             TLS_bottom = BottomVoxelDensity,
+             TLS_top    = TopVoxelDensity),
+    by = c("treeID", "site")
+  ) %>%
+  filter(Platform != "TLS") %>%
+  pivot_longer(
+    cols      = c(BottomVoxelDensity, TopVoxelDensity),
+    names_to  = "position",
+    values_to = "lidar_density"
+  ) %>%
+  mutate(
+    tls_density = ifelse(position == "BottomVoxelDensity", TLS_bottom, TLS_top),
+    position    = recode(position,
+                         "BottomVoxelDensity" = "Bottom",
+                         "TopVoxelDensity"    = "Top")
+  )
+
+
+
+windows(width = 16, height = 12)
+ggplot(density_diff, aes(x = tls_density, y = lidar_density, color = Platform, shape = position)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "grey40") +
+  geom_point(size = 4, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, linewidth = 1, aes(group = Platform)) +
+  facet_wrap(~ position, scales = "free") +
+  scale_color_manual(values = platform_colors) +
+  scale_shape_manual(values = c("Bottom" = 16, "Top" = 17)) +
+  labs(
+    title    = "Voxel density: TLS vs other platforms",
+    subtitle = "Dashed line = 1:1 | Points above = platform denser than TLS",
+    x        = "TLS Voxel Density",
+    y        = "Platform Voxel Density",
+    color    = "Platform",
+    shape    = "Crown Position"
+  ) +
+  theme_bw(base_size = 14) +
+  theme(
+    strip.text   = element_text(face = "bold", size = 14),
+    plot.title   = element_text(face = "bold", size = 15),
+    axis.text    = element_text(size = 12),
+    legend.text  = element_text(size = 12)
+  )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ── Pivot volume metrics to long then wide for joining ────────────────────────
+volume_long <- results_df %>%
+  select(treeID, site, Platform, VoxelVolume_m3, HullVolume_m3) %>%
+  rename(volume = VoxelVolume_m3, volume_hull = HullVolume_m3)
+
+# ── Species metrics with biomass estimates ────────────────────────────────────
+species_metrics <- results_df %>%
+  left_join(volume_long) %>%
+  mutate(
+    # Voxel volume biomass (m3 × wood density kg/m3 → metric ton)
+    biomass_allometry_volume = case_when(
+      species == "ponderosa"    ~ (volume     * 0.5308  ) ,
+      species == "menziesii"   ~ (volume      * 0.5327   ) ,
+      species == "strobiformis"~ (volume    * 0.5299   ) ,
+      TRUE ~ NA_real_
+    ),
+    # Hull volume biomass
+    biomass_allometry_hull = case_when(
+      species == "ponderosa"    ~ (volume_hull * 0.5308  ) ,
+      species == "menziesii"   ~ (volume_hull  * 0.5327  ) ,
+      species == "strobiformis"~ (volume_hull * 0.5299   ) ,
+      TRUE ~ NA_real_
+    ),
+    # DBH allometric biomass (log-linear, result in kg → metric ton)
+    biomass_allometry_ground = case_when(
+      species == "ponderosa"    ~ exp(-2.6177 + 2.4638 * log(DBH)) ,
+      species == "menziesii"   ~ exp(-2.4623 + 2.4852 * log(DBH)) ,
+      species == "strobiformis"~ exp(-2.6177 + 2.4638 * log(DBH)) ,
+      TRUE ~ NA_real_
+    ),
+    # Crown area × height allometric biomass
+    biomass_allometry_crownheight = case_when(
+      species == "ponderosa"    ~ 0.0776  * (CrownArea_m2^0.934)  * (Height_m^1.018),
+      species == "menziesii"   ~ 0.0474  * (CrownArea_m2^0.879)  * (Height_m^1.119),
+      species == "strobiformis"~ 0.0618 * (CrownArea_m2^0.950)  * (Height_m^0.988),
+      TRUE ~ NA_real_
+    )
+  )
+
+write.csv(species_metrics,"Species_metrics.csv")
+
+# Long format for biomass metrics only
+biomass_long <- species_metrics %>%
+  select(treeID, site, Platform, species,
+         biomass_allometry_volume, biomass_allometry_hull,
+         biomass_allometry_ground, biomass_allometry_crownheight) %>%
+  mutate(tree_index = as.integer(factor(paste(site, treeID)))) %>%
+  pivot_longer(cols = starts_with("biomass"),
+               names_to = "method",
+               values_to = "biomass_t")
+
+
+
+
+
+biomass_long_diff <- biomass_long %>%
+  filter(method != "biomass_allometry_ground") %>%
+  left_join(
+    biomass_long %>% 
+      filter(method == "biomass_allometry_ground") %>% 
+      select(treeID, site, biomass_allometry_ground = biomass_t),
+    by = c("treeID", "site")
+  ) %>%
+  mutate(
+    biomass_diff = biomass_t - biomass_allometry_ground,
+    tree_index   = as.integer(factor(treeID)),
+    method = case_match(method,
+                        "biomass_allometry_volume"      ~ "Voxel Volume",
+                        "biomass_allometry_hull"        ~ "Hull Volume",
+                        "biomass_allometry_crownheight" ~ "Crown x Height"
+    )
+)
+   
+
+
+library(patchwork)
+
+make_box <- function(met, ymin, ymax, show_legend = FALSE) {
+  ggplot(biomass_long_diff %>% filter(method == met),
+         aes(x = Platform, y = biomass_diff, fill = Platform)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey40") +
+    geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+    geom_jitter(aes(color = Platform), width = 0.15, size = 2, alpha = 0.7) +
+    ylim(ymin, ymax) +
+    scale_fill_manual(values  = platform_colors) +
+    scale_color_manual(values = platform_colors) +
+    labs(title = met, x = NULL, y = "Δ Biomass (t)") +
+    theme_bw(base_size = 13) +
+    theme(
+      axis.text.x     = element_text(angle = 30, hjust = 1),
+      plot.title      = element_text(face = "bold", size = 12),
+      legend.position = ifelse(show_legend, "right", "none")
+    )
+}
+
+windows(width = 16, height = 7)
+make_box("Crown x Height", -1000,  1000) |
+  make_box("Hull Volume",    -1000,    1000) |
+  make_box("Voxel Volume",   -1000,    1000, show_legend = TRUE) +
+  plot_annotation(
+    title    = "Biomass difference from ground DBH allometry",
+    subtitle = "Positive = overestimate | Negative = underestimate",
+    theme    = theme(plot.title = element_text(face = "bold", size = 14))
+  )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+load_tree <- function(platform, site, parent_dir, tree) {
+  folder <- file.path(parent_dir, paste0(platform, "_", site))
+  f <- list.files(folder, pattern = paste0("^", site, "_.*tree", tree, "\\.las$"),
+                  full.names = TRUE)
+  if (length(f) == 0) { message("Not found: ", platform, "_", site, " tree", tree); return(NULL) }
+  las <- readLAS(f[1])
+  if (is.empty(las)) return(NULL)
+  data.frame(X = las@data$X, Y = las@data$Y, Z = las@data$Z, Platform = platform)
+}
+
+# ── Load all 4 platforms ──────────────────────────────────────────────────────
+target_site <- "MBA"
+target_tree <- "6"
+plot_name   <- paste(target_site, "Tree", target_tree)
+
+tls           <- load_tree("TLS",           target_site, parent_dir, target_tree)
+nadir         <- load_tree("nadir",         target_site, parent_dir, target_tree)
+nadir_oblique <- load_tree("nadir_oblique", target_site, parent_dir, target_tree)
+tls_uav       <- load_tree("TLS_UAV",       target_site, parent_dir, target_tree)
+
+# ── Common bounding box across all ───────────────────────────────────────────
+all_pts <- rbind(tls, nadir, nadir_oblique, tls_uav)
+xlim <- range(all_pts$X, na.rm = TRUE)
+ylim <- range(all_pts$Y, na.rm = TRUE)
+zlim <- range(all_pts$Z, na.rm = TRUE)
+
+# ── Colors per platform ───────────────────────────────────────────────────────
+col_tls           <- "#4CAF50"
+col_nadir         <- "#2196F3"
+col_nadir_oblique <- "#FF9800"
+col_tls_uav       <- "red"
+
+# ── Helper: overlay two clouds in current panel ───────────────────────────────
+overlay_plot <- function(df1, col1, lab1, df2, col2, lab2, title) {
+  rgl::plot3d(df1$X, df1$Y, df1$Z,
+              col = col1, size = 2, alpha = 0.6,
+              xlim = xlim, ylim = ylim, zlim = zlim,
+              main = title, xlab = "X", ylab = "Y", zlab = "Z")
+  rgl::points3d(df2$X, df2$Y, df2$Z,
+                col = col2, size = 2, alpha = 0.6)
+  rgl::grid3d(c("x", "y", "z"))
+  rgl::legend3d("topright", legend = c(lab1, lab2),
+                col = c(col1, col2), pch = 16, cex = 1.2)
+}
+
+# ── 3 panels: TLS (green) overlaid with each platform ────────────────────────
+rgl::open3d()
+rgl::par3d(windowRect = c(50, 50, 1800, 700))
+rgl::mfrow3d(1, 3)
+
+overlay_plot(tls, col_tls, "TLS",
+             nadir, col_nadir, "Nadir",
+             paste0(plot_name, " | TLS vs Nadir"))
+
+rgl::next3d()
+overlay_plot(tls, col_tls, "TLS",
+             nadir_oblique, col_nadir_oblique, "Nadir Oblique",
+             paste0(plot_name, " | TLS vs Nadir Oblique"))
+
+rgl::next3d()
+overlay_plot(tls, col_tls, "TLS",
+             tls_uav, col_tls_uav, "TLS-UAV",
+             paste0(plot_name, " | TLS vs TLS-UAV"))
+
+
+
+
+
+
+
+target_site <- "MBA"
+plot_name   <- target_site
+
+# ── Load entire plot (all trees combined) ─────────────────────────────────────
+load_plot <- function(platform, site, parent_dir) {
+  folder <- file.path(parent_dir, paste0(platform, "_", site))
+  files  <- list.files(folder, pattern = "\\.las$", full.names = TRUE)
+  if (length(files) == 0) { message("Not found: ", platform, "_", site); return(NULL) }
+  pts <- lapply(files, function(f) {
+    las <- readLAS(f)
+    if (is.empty(las)) return(NULL)
+    data.frame(X = las@data$X, Y = las@data$Y, Z = las@data$Z)
+  })
+  df <- do.call(rbind, Filter(Negate(is.null), pts))
+  df$Platform <- platform
+  df
+}
+
+tls           <- load_plot("TLS",           target_site, parent_dir)
+nadir         <- load_plot("nadir",         target_site, parent_dir)
+nadir_oblique <- load_plot("nadir_oblique", target_site, parent_dir)
+tls_uav       <- load_plot("TLS_UAV",       target_site, parent_dir)
+
+# ── Common bounding box ───────────────────────────────────────────────────────
+all_pts <- rbind(tls, nadir, nadir_oblique, tls_uav)
+xlim <- range(all_pts$X, na.rm = TRUE)
+ylim <- range(all_pts$Y, na.rm = TRUE)
+zlim <- range(all_pts$Z, na.rm = TRUE)
+
+# ── Colors ────────────────────────────────────────────────────────────────────
+col_tls           <- "#4CAF50"
+col_nadir         <- "#2196F3"
+col_nadir_oblique <- "#FF9800"
+col_tls_uav       <- "red"
+
+# ── Helper ────────────────────────────────────────────────────────────────────
+overlay_plot <- function(df1, col1, lab1, df2, col2, lab2, title) {
+  rgl::plot3d(df1$X, df1$Y, df1$Z,
+              col = col1, size = 1, alpha = 0.5,
+              xlim = xlim, ylim = ylim, zlim = zlim,
+              main = title, xlab = "X", ylab = "Y", zlab = "Z")
+  rgl::points3d(df2$X, df2$Y, df2$Z,
+                col = col2, size = 1, alpha = 0.5)
+  rgl::grid3d(c("x", "y", "z"))
+  rgl::legend3d("topright", legend = c(lab1, lab2),
+                col = c(col1, col2), pch = 16, cex = 1.2)
+}
+
+# ── 3 panels ──────────────────────────────────────────────────────────────────
+rgl::open3d()
+rgl::par3d(windowRect = c(50, 50, 1800, 700))
+rgl::mfrow3d(1, 3)
+
+overlay_plot(tls, col_tls, "TLS",
+             nadir, col_nadir, "Nadir",
+             paste0(plot_name, " | TLS vs Nadir"))
+rgl::next3d()
+overlay_plot(tls, col_tls, "TLS",
+             nadir_oblique, col_nadir_oblique, "Nadir Oblique",
+             paste0(plot_name, " | TLS vs Nadir Oblique"))
+rgl::next3d()
+overlay_plot(tls, col_tls, "TLS",
+             tls_uav, col_tls_uav, "TLS-UAV",
+             paste0(plot_name, " | TLS vs TLS-UAV"))
+
