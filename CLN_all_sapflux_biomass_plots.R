@@ -1,0 +1,3255 @@
+#Written by Cindy Norton 2026
+#Script segments a point cloud into clusters using watershed segmentation on rasterized point cloud
+#install.packages('VoxR')
+#remotes::install_github('bi0m3trics/spanner')
+#install.packages("remotes")
+#install.packages(c('spanner','readxl',"dplR","dplyr","tidyr", "geosphere", "lidR", "raster", "TreeLS", "rgdal", "rgeos", "sp","sf","tibble","ggplot2","tidyverse"),dependencies=TRUE)
+#remotes::install_github("Jean-Romain/lidR", dependencies=TRUE)
+#remotes::install_github('tiagodc/TreeLS',dependencies=TRUE)
+#remotes::install_github('cszang/treeclim',dependencies=TRUE)
+#install.packages("janitor")
+gc()
+#Packages <- c("dplyr", "ggplot2",  "httr", "rjson", "splitstackshape", "jsonlite", "curl","purrr","reshape2","tidyr","stringr","broom","modelr","lubridate")
+#lapply(Packages, library, character.only = TRUE)
+#library("pracma")
+Packages <- c('cowplot','matrixStats','patchwork','treeclim','remotes','readxl',"dplR","dplyr","tidyr", "geosphere", "lidR", 'terra',"sf","tibble","ggplot2","tidyverse","lubridate","janitor")
+lapply(Packages, library, character.only = TRUE)
+
+gc()
+setwd("//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/Thermal/Results/")
+
+options(scipen=999)
+#Written by Cindy Norton 2022
+#install.packages('car')
+library('ggplot2')
+library(dplyr)
+library(car)
+library(reshape2)
+library(gridExtra)
+library(tidyverse)
+library(mgcv)   # for GAMs
+setwd('//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/outputs/')
+
+
+thermal_data_dry <- readxl::read_xlsx('//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/Thermal/Results/Figures_Metadata_sapwood_sampling_080222.xlsx', sheet = 1) %>% 
+  filter(weather == 'dry') %>%
+  mutate(
+    # Ensure key columns are numeric
+    across(c(Core_radius_cm, Sapwood_width_visual_cm, Sapwood_width_thermal_cm), as.numeric))%>%
+  mutate(
+    Heartwood_radius_thermal = as.numeric(Core_radius_cm) - as.numeric(Sapwood_width_thermal_cm),
+    Heartwood_radius_visual = as.numeric(Core_radius_cm) - as.numeric(Sapwood_width_visual_cm),
+    SH_ratio_thermal = as.numeric(Sapwood_width_thermal_cm) / Heartwood_radius_thermal,
+    SH_ratio_visual = as.numeric(Sapwood_width_visual_cm) / Heartwood_radius_visual,
+    Sapwood_area_thermal = pi * as.numeric(Core_radius_cm)^2 - pi * Heartwood_radius_thermal^2,
+    Sapwood_area_visual = pi * as.numeric(Core_radius_cm)^2 - pi * Heartwood_radius_visual^2,
+    Heartwood_area_thermal = pi * Heartwood_radius_thermal^2,
+    Heartwood_area_visual = pi * Heartwood_radius_visual^2
+  )%>%
+  rename(DBH = DBH_cm)%>%
+  group_by(Species, Tree_ID) %>%
+  filter(!is.na(DBH) & !is.na(Sapwood_area_thermal) & DBH > 0 & Sapwood_area_thermal > 0)
+# group by Species and TreeID
+options("scipen" = 100, "digits" = 2)
+
+
+
+
+
+
+
+
+
+
+
+
+
+library(dplyr)
+library(broom) # for tidy regression results
+
+# Fit log-log model per Species
+sapwood_constants <- thermal_data_dry %>%
+  group_by(Species) %>%
+  do({
+    fit <- lm(log(Sapwood_area_thermal) ~ log(DBH), data = .)
+    tibble(
+      Species = unique(.$Species),
+      B1 = coef(fit)[2],                  # slope
+      B2 = exp(coef(fit)[1]),              # intercept back-transformed
+      R2 = summary(fit)$r.squared,
+      n = nrow(.)
+    )
+  })
+
+sapwood_constants
+
+
+
+
+############################################ Tree Ring and Ground Fusion ####################################################
+#SET the path for folder where you have the file stoblue, each function will load the data format
+groundA =   readxl::read_excel('//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/data/NorthAmerica Data/MtBigelow_Metadata/MtBigelow_Metadata/metadata_MtBigelow_Spring_2022.xlsx', sheet=1)
+groundB =   readxl::read_excel('//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/data/NorthAmerica Data/MtBigelow_Metadata/MtBigelow_Metadata/metadata_MtBigelow_Spring_2022.xlsx', sheet=2)
+groundC =   readxl::read_excel('//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/data/NorthAmerica Data/MtBigelow_Metadata/MtBigelow_Metadata/metadata_MtBigelow_Spring_2022.xlsx', sheet=3)
+MBA<- "//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/data/NorthAmerica Data/MtBigelow_Treerings/MtBigelow_Treerings/MBA_revised.rwl"
+MBB<- "//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/data/NorthAmerica Data/MtBigelow_Treerings/MtBigelow_Treerings/MBB.rwl"
+MBC<- "//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/data/NorthAmerica Data/MtBigelow_Treerings/MtBigelow_Treerings/MBC.rwl"
+
+mtB_A_xyz <- "//snre-snow/projects/Babst_Lidar_treering_CLNF/CLNorton/outputs/TLS_Bigelow_A_PCGR.xyz"
+mtB_C_xyz <- "//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/outputs/TLS_Bigelow_C_GRPC.xyz"
+
+drone <-  "//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/outputs/Mt.Bigelow_lidarFlight/Mt_Bigelow_2022_Final.las"
+climate <- "//snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/outputs/Mt.bigelow_prism_metereological.xlsx"
+#noaa_climate_csv <- read.csv("https://www.ncei.noaa.gov/access/services/data/v1?dataset=daily-summaries&dataTypes=PRCP,TMAX,TMIN&stations=USC00025737,USC00025734,USC00025735,USC00025733,USC00025732,USC00026202&startDate=1950-01-01&endDate=2022-12-19&format=csv&options=includeStationName:1&includeStationName=true&units=metric")
+#rwl<-dplR::read.rwl(tree) #read file path of rwl
+
+
+###FUNCTION 1 - tree ring data parse and formatting###
+#raw tree ring data parsing and mean tree cores
+treering_parse <- function(tree) {
+  rwl<-dplR::read.rwl(tree) #read file path of rwl
+  detrend.rwi <- dplR::detrend(rwl = rwl, method = "Spline") %>% #detrend rwl
+    t() %>% #transpose years as columns and row as each core sample 
+    as.data.frame() %>% #as data frame
+    dplyr::rename_with( ~ paste0(.x)) %>% #adding "year_" to each year column name for unique identifiers
+    tibble::rownames_to_column()%>% #converts sample row name into a column to be parsed
+    tidyr::separate(rowname,
+                    into = c("site", "coreID"),
+                    sep = "(?<=[A-ZA-Z])(?=[0-9])") %>% ## separates column of site and treeID
+    tidyr::separate(coreID,
+                    into = c("treeID", "core"),
+                    sep = "(?<=[0-9])(?=[A-ZA-Za-z])")
+  return(detrend.rwi)}
+MBA_parse <- treering_parse(MBA)
+MBB_parse <- treering_parse(MBB)
+MBC_parse <- treering_parse(MBC)
+
+#write.csv(data.transpose, file = "datatranspose.csv")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##RAW GROUND DATA
+MBA_coor <-c(-110.72624,32.41585) 	
+MBB_coor <-c(-110.72578,32.41596) 	
+MBC_coor <-c(-110.72517,32.41548) 	
+
+
+###FUNCTION 2 - ground data azimuth and distance to coordinates###
+ground_parse <- function(coor, ground) { #read xlsx ground metadata file
+  dist_azim <- ground
+  coor_list <- list() #creates empty list for new coordinates
+  
+  for (i in 1:nrow(dist_azim)) { #for loop to create a lat long for each azimuth and distance from plot center lat and lon
+    stemAzimuth <- dist_azim$Azimuth[i] #grab azimuth
+    stemDistance <- dist_azim$Distance[i] #grab distance
+    
+    new_coordinates <- geosphere::destPoint(coor, stemAzimuth,  stemDistance) %>% #estimates new lat lon coordinate
+      as.data.frame() %>% #make as data frame
+      add_column(treeID = dist_azim$treeID[i]) %>% #add treeID column of that tree
+      add_column(stemAzimuth = stemAzimuth) %>% #add Azimuth column of that tree
+      add_column(stemDistance = stemDistance) %>% #add Distance column of that tree
+      add_column(Species = dist_azim$Species[i]) %>% #add Species column of that tree
+      add_column(Height = dist_azim$Height[i])%>% #add Height column of that tree
+      add_column(DBH = dist_azim$DBH[i]) #add DBH column of that tree
+    
+    
+    coor_list[[i]] <- new_coordinates #put result of loop in list
+    
+  }
+  
+  coor_df<- coor_list %>% bind_rows() %>% na.omit() #remove NA rows
+  
+  
+  return(coor_df)
+}
+
+MBA_ground <- ground_parse(MBA_coor, groundA)%>%
+  mutate(Species = case_when(
+    Species == "ponderosa"    ~ "PIPO",
+    Species == "strobiformis" ~ "PISF",
+    Species == "menziesii"    ~ "PSME",
+    TRUE                      ~ Species   # keep other Species unchanged
+  ))
+
+MBB_ground <- ground_parse(MBB_coor, groundB) %>%
+  mutate(Species = case_when(
+    Species == "ponderosa"    ~ "PIPO",
+    Species == "strobiformis" ~ "PISF",
+    Species == "menziesii"    ~ "PSME",
+    TRUE                      ~ Species   # keep other Species unchanged
+  ))
+
+MBC_ground <- ground_parse(MBC_coor, groundC)  %>%
+  mutate(Species = case_when(
+    Species == "ponderosa"    ~ "PIPO",
+    Species == "strobiformis" ~ "PISF",
+    Species == "menziesii"    ~ "PSME",
+    TRUE                      ~ Species   # keep other Species unchanged
+  ))
+
+
+
+
+
+all_ground<- MBA_ground%>%bind_rows(MBB_ground)%>%bind_rows(MBC_ground) 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##FUNCTION 3 -  tree ring and ground data merge###
+###TREE rings and ground merge#####
+treering_ground <- function (treering_parse, ground_parse, plot) {
+  
+  treering_ground_join <- treering_parse %>% 
+    subset(site == plot) %>% #subsets to input plot
+    lapply(as.numeric)%>% #makes numeric
+    as.data.frame() %>% #makes into df
+    group_by(treeID) %>% #groups data by the treeID
+    summarise(across(-c(site, core), mean, na.rm = TRUE))%>% #a mean summary of multiple cores per tree
+    left_join(ground_parse, by = "treeID") 
+  #joins tree ring data with ground metadat using treeID
+  colnames(treering_ground_join)<-gsub("X","",colnames(treering_ground_join))
+  
+  return(treering_ground_join)
+}
+
+MBA_treering_ground <- treering_ground(MBA_parse, MBA_ground, "MBA")
+MBB_treering_ground <- treering_ground(MBB_parse, MBB_ground, "MBB")
+MBC_treering_ground <- treering_ground(MBC_parse, MBC_ground, "MBC")
+
+
+
+# Define DBH values per Species
+dbh_list <- list(
+  PIPO = c(22.3, 29.2, 43.5, 27.1),
+  PISF = c(31.9, 33.4, 49.8),
+  PSME = c(20, 37.1)
+)
+
+
+# Tolerance (e.g., 1 cm)
+tol <- 10
+
+# Subset trees with DBH within tolerance
+MBA_treering_ground <- MBA_treering_ground %>%
+  filter(
+    (Species == "PIPO" & sapply(DBH, function(x) any(abs(x - dbh_list$PIPO) <= tol))) |
+      (Species == "PISF" & sapply(DBH, function(x) any(abs(x - dbh_list$PISF) <= tol))) |
+      (Species == "PSME" & sapply(DBH, function(x) any(abs(x - dbh_list$PSME) <= tol)))
+  )
+
+MBA_treering_ground
+
+
+
+# Subset trees with DBH within tolerance
+MBB_treering_ground <- MBB_treering_ground %>%
+  filter(
+    (Species == "PIPO" & sapply(DBH, function(x) any(abs(x - dbh_list$PIPO) <= tol))) |
+      (Species == "PISF" & sapply(DBH, function(x) any(abs(x - dbh_list$PISF) <= tol))) |
+      (Species == "PSME" & sapply(DBH, function(x) any(abs(x - dbh_list$PSME) <= tol)))
+  )
+
+MBB_treering_ground
+
+
+
+
+
+# Subset trees with DBH within tolerance
+MBC_treering_ground <- MBC_treering_ground %>%
+  filter(
+    (Species == "PIPO" & sapply(DBH, function(x) any(abs(x - dbh_list$PIPO) <= tol))) |
+      (Species == "PISF" & sapply(DBH, function(x) any(abs(x - dbh_list$PISF) <= tol))) |
+      (Species == "PSME" & sapply(DBH, function(x) any(abs(x - dbh_list$PSME) <= tol)))
+  )
+
+MBC_treering_ground
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###FUNCTION 4 - DBH and Percentage reconstruction###
+###DBH RECONSTRUCTIONS
+DBH_recon <- function(tree,ground_parse){
+  
+  rwl<-dplR::read.rwl(tree)%>%#read file path of rwl
+    t() %>% #transpose years as columns and row as each core sample 
+    as.data.frame() %>% #as data frame
+    dplyr::rename_with( ~ paste0("year_",.x)) %>% #adding "year_" to each year column name for unique identifiers
+    tibble::rownames_to_column()%>% #converts sample row name into a column to be parsed
+    tidyr::separate(rowname,
+                    into = c("site", "coreID"),
+                    sep = "(?<=[A-ZA-Z])(?=[0-9])") %>% ## separates column of site and treeID
+    tidyr::separate(coreID,
+                    into = c("treeID", "core"),
+                    sep = "(?<=[0-9])(?=[A-ZA-Za-z])")%>%
+    rev()
+  
+  treering_tree <- rwl %>% 
+    lapply(as.numeric)%>% #makes numeric
+    as.data.frame() %>% #makes into df
+    group_by(treeID) %>% #groups data by the treeID
+    summarise(across(-c(site, core), mean, na.rm = TRUE))%>%
+    left_join(ground_parse, by = "treeID") %>%
+    as.data.frame()
+  
+  treering_tree[is.na(treering_tree)] <- 0  #zero all NA
+  year_cols <- which(substr(x = colnames(treering_tree), start = 1, stop = 4) == "year")  # Identify the columns that have data of interest which are year columns
+  treering_tree$sum <- rowSums(x = treering_tree[, year_cols], na.rm = TRUE)  #row sums all the years into column, removing NA 
+  csum <- treering_tree  # Make a copy of that data frame that we will use for difference
+  csum[, year_cols] <- sapply(1:ncol(csum[, year_cols]), function(col){rowSums(csum[, year_cols][1:col], na.rm = TRUE)}) #convert years to cumulative sum of year columns
+  dif <- csum # Make a copy of that data frame that we will use for difference
+  dif[, year_cols] <- (dif$sum) - (dif[, year_cols]) #calculate difference
+  frac <- csum # Make a copy of that data frame that we will use for difference
+  frac[, year_cols] <- dif[, year_cols]/dif$sum #calculate difference
+  dbh <- csum # Make a copy of that data frame that we will use for difference
+  dbh[, year_cols] <- as.numeric(frac$DBH)*frac[, year_cols] #calculate difference
+  
+  # Reality check to see that percentages add up to 100
+  
+  return(dbh)
+}
+
+
+
+
+
+
+
+MBA_DBH_recon_results <- DBH_recon(MBA, MBA_ground)%>%
+  mutate(Species = case_when(
+    Species == "ponderosa"    ~ "PIPO",
+    Species == "strobiformis" ~ "PISF",
+    Species == "menziesii"    ~ "PSME",
+    TRUE                      ~ Species   # keep other Species unchanged
+  ))
+MBB_DBH_recon_results <- DBH_recon(MBB, MBB_ground)%>%
+  mutate(Species = case_when(
+    Species == "ponderosa"    ~ "PIPO",
+    Species == "strobiformis" ~ "PISF",
+    Species == "menziesii"    ~ "PSME",
+    TRUE                      ~ Species   # keep other Species unchanged
+  ))
+MBC_DBH_recon_results <- DBH_recon(MBC, MBC_ground)%>%
+  mutate(Species = case_when(
+    Species == "ponderosa"    ~ "PIPO",
+    Species == "strobiformis" ~ "PISF",
+    Species == "menziesii"    ~ "PSME",
+    TRUE                      ~ Species   # keep other Species unchanged
+  ))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+####BIOMASS RECONSTRUCTION########
+##LiDAR TREES BIOMASS current date 
+#subset the DBH of the biomassI have available for Sap Flow
+library(dplyr)
+library(readr)
+
+lidar_biomass <- read_csv(
+  "\\\\snre-snow/projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/species_metrics_05mvox_033126.csv"
+)
+
+dbh_tol <- 100  # cm tolerance
+
+lidar_biomass_subset <- lidar_biomass %>%
+  mutate(
+    Species = case_when(
+      species == "ponderosa"    ~ "PIPO",
+      species == "strobiformis" ~ "PISF",
+      species == "menziesii"    ~ "PSME",
+      TRUE                      ~ species
+    )
+  ) %>%
+  rowwise() %>%
+  filter(
+    Species %in% names(dbh_list) &&
+      any(abs(DBH - dbh_list[[Species]]) <= dbh_tol)
+  ) %>%
+  ungroup()
+
+
+
+
+library(ggplot2)
+library(broom)
+
+# ── Subset by platform ────────────────────────────────────────────────────────
+# Change "TLS" to whatever platform value(s) you want to keep
+lidar_biomass_subset <- lidar_biomass_subset %>%
+  filter(Platform == "TLS_UAV")   # e.g. "TLS", "ALS", "UAS" — adjust as needed
+
+# ── Fit power-law per species ─────────────────────────────────────────────────
+models <- lidar_biomass_subset %>%
+  group_by(Species) %>%
+  do(fit = lm(log(biomass_allometry_volume) ~ log(DBH), data = .)) %>%
+  mutate(
+    intercept = exp(coef(fit)[1]),    # a  (back-transformed)
+    exponent  = coef(fit)[2],         # b
+    r2        = summary(fit)$r.squared
+  )
+
+print(models %>% select(Species, intercept, exponent, r2))
+
+# ── Visualize ─────────────────────────────────────────────────────────────────
+windows()
+ggplot(lidar_biomass_subset, 
+       aes(x = DBH, y = biomass_allometry_volume, color = Species)) +
+  geom_point(alpha = 0.6) +
+  stat_smooth(method = "lm", formula = y ~ x,
+              aes(group = Species), se = TRUE) +
+  scale_x_log10() +
+  scale_y_log10() +
+  labs(
+    title = "DBH–Biomass Relationship by Species",
+    subtitle = paste("Platform:", unique(lidar_biomass_subset$Platform)),
+    x = "DBH (cm)",
+    y = "Biomass — allometry volume (ton)"
+  ) +
+  theme_minimal()
+
+
+
+
+
+
+
+# ── 1. Combine all plot DBH reconstructions ───────────────────────────────────
+all_DBH_recon <- bind_rows(
+  MBA_DBH_recon_results %>% mutate(Plot = "MBA"),
+  MBB_DBH_recon_results %>% mutate(Plot = "MBB"),
+  MBC_DBH_recon_results %>% mutate(Plot = "MBC")
+) %>% select(-DBH)
+
+# ── 2. Extract model coefficients ────────────────────────────────────────────
+coef_table <- models %>%
+  select(Species, intercept, exponent)
+
+# ── 3. Reconstruct biomass ────────────────────────────────────────────────────
+biomass_recon <- all_DBH_recon %>%
+  pivot_longer(
+    cols = starts_with("year_"),
+    names_to = "Year",
+    values_to = "DBH_recon"
+  ) %>%
+  mutate(Year = as.integer(gsub("year_", "", Year))) %>%
+  left_join(coef_table, by = "Species") %>%
+  mutate(
+    DBH_recon  = as.numeric(DBH_recon),
+    Biomass_t = intercept * DBH_recon ^ exponent
+  )
+
+# ── 4. Summarise across all plots combined ────────────────────────────────────
+biomass_summary <- biomass_recon %>%
+  filter(Year >= 2009 & Year <= 2021) %>%
+  filter(!is.na(DBH_recon) & DBH_recon != 0 & !is.na(Biomass_t))%>%
+  group_by(Species, Year) %>%
+  summarise(
+    N_trees       = n(),
+    Total_biomass = sum(Biomass_t, na.rm = TRUE),
+    Mean_biomass  = mean(Biomass_t, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# ── 5. Visualise ──────────────────────────────────────────────────────────────
+windows()
+ggplot(biomass_summary, aes(x = Year, y = Total_biomass, color = Species)) +
+  geom_line(linewidth = 0.8) +
+  geom_point(size = 1.5) +
+  labs(
+    title    = "Reconstructed Stand Biomass 2008–Present",
+    subtitle = "Power-law allometry from TLS–UAV DBH–biomass relationship",
+    x        = "Year",
+    y        = "Total Biomass (ton)"
+  ) +
+  theme_minimal()
+
+
+####BIOMASS RECONSTRUCTION########
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+################SAPFLUX-relationship with RWI################
+
+
+###DBH
+#PIPO: 22.3, 29.2,43.5,27.1
+#PISF: 31.9, 33.4, 49.8
+#PSME: 20, 37.1
+
+
+# Define DBH values per Species
+dbh_list <- list(
+  PIPO = c(22.3, 29.2, 43.5, 27.1),
+  PISF = c(31.9, 33.4, 49.8),
+  PSME = c(20, 37.1)
+)
+
+# Tolerance (e.g., ±5 cm)
+tol <- 1
+
+# Subset trees with DBH within tolerance
+filter_by_Species_dbh <- function(df, dbh_list, tol) {
+  df %>%
+    filter(Species %in% names(dbh_list)) %>%
+    rowwise() %>%
+    filter(any(abs(DBH - dbh_list[[Species]]) <= tol)) %>%
+    ungroup()
+}
+
+
+MBA_sub <- filter_by_Species_dbh(MBA_treering_ground, dbh_list, tol)
+MBB_sub <- filter_by_Species_dbh(MBB_treering_ground, dbh_list, tol)
+MBC_sub <- filter_by_Species_dbh(MBC_treering_ground, dbh_list, tol)
+
+
+sapflow_yearly_clean
+sapflow_yearly_clean_mean
+
+
+library(dplyr)
+library(ggplot2)
+
+# ==========================================================
+# 1. SAPFLOW: Species-level year availability (background)
+# ==========================================================
+
+sapflow_Species_years <- sapflow_yearly_clean_mean %>%
+  distinct(Species, YEAR) %>%
+  mutate(
+    y = 0,                 # fixed background position
+    source = "Sapflow"
+  )
+
+library(dplyr)
+library(tidyr)
+
+transpose_treering <- function(df, site_name) {
+  
+  # Identify year columns automatically (numeric column names)
+  year_cols <- colnames(df)[grepl("^[0-9]{4}$", colnames(df))]
+  
+  # Pivot years to long format
+  df_long <- df %>%
+    pivot_longer(
+      cols = all_of(year_cols),
+      names_to = "YEAR",
+      values_to = "value"
+    ) %>%
+    mutate(
+      YEAR = as.integer(YEAR),
+      site = site_name
+    ) %>%
+    select(site, treeID, YEAR, value, Species, DBH) %>%
+    filter(!is.na(value))
+  
+  return(df_long)
+}
+
+# =============================
+# Apply to your three datasets
+# =============================
+MBA_long <- transpose_treering(MBA_sub, "MBA")
+MBB_long <- transpose_treering(MBB_sub, "MBB")
+MBC_long <- transpose_treering(MBC_sub, "MBC")
+
+# Combine all three
+treering_tree_years <- bind_rows(MBA_long, MBB_long, MBC_long)
+
+
+
+treering_long_std <- treering_tree_years %>%
+  group_by(Species, treeID) %>%
+  mutate(
+    ring_z = scale(value)[,1]
+  ) %>%
+  ungroup()
+
+sapflow_Species_mean <- sapflow_yearly_clean_mean %>%
+  select(Species = Species, YEAR, mean_sapflow) %>%
+  filter(!is.na(mean_sapflow))
+
+
+
+common_years <- intersect(
+  unique(sapflow_Species_mean$YEAR),
+  unique(treering_long_std$YEAR)
+)
+
+sapflow_Species_mean <- sapflow_Species_mean %>%
+  filter(YEAR %in% common_years)
+
+treering_long_std <- treering_long_std %>%
+  filter(YEAR %in% common_years)
+
+
+
+
+
+windows()
+
+ggplot() +
+  
+  # ---- Individual tree-ring series (thin) ----
+geom_line(
+  data = treering_long_std,
+  aes(x = YEAR, y = ring_z, group = treeID),
+  color = "#1b9e77",
+  alpha = 0.5,
+  linewidth = 0.5
+) +
+  
+  # ---- Species mean sapflow (thick) ----
+geom_line(
+  data = sapflow_Species_mean,
+  aes(x = YEAR, y = mean_sapflow),
+  color = "black",
+  linewidth = 1.3
+) +
+  
+  facet_wrap(~ Species, scales = "free_y") +
+  
+  labs(
+    x = "Year",
+    y = "Sapflow mean (black) / Tree-ring z-score (green)",
+    title = "Species-Level Sapflow and Individual Tree-Ring Series"
+  ) +
+  
+  theme_bw() +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    strip.background = element_rect(fill = "grey90"),
+    strip.text = element_text(face = "bold")
+  )
+
+
+
+
+
+
+
+library(dplyr)
+
+cor_stats <- treering_long_std %>%
+  left_join(
+    sapflow_Species_mean,
+    by = c("YEAR", "Species")
+  ) %>%
+  group_by(Species) %>%
+  summarize(
+    r = cor(ring_z, mean_sapflow, use = "complete.obs"),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = paste0("r = ", round(r, 2))
+  )
+windows()
+
+ggplot() +
+  # ---- Individual tree-ring series ----
+geom_line(
+  data = treering_long_std,
+  aes(x = YEAR, y = ring_z, group = treeID),
+  color = "#1b9e77",
+  alpha = 0.5,
+  linewidth = 0.5
+) +
+  
+  # ---- Species mean sapflow ----
+geom_line(
+  data = sapflow_Species_mean,
+  aes(x = YEAR, y = mean_sapflow),
+  color = "black",
+  linewidth = 1.3
+) +
+  
+  # ---- Correlation annotation ----
+geom_text(
+  data = cor_stats,
+  aes(x = -Inf, y = Inf, label = label),
+  hjust = -0.1,
+  vjust = 1.2,
+  inherit.aes = FALSE,
+  size = 3.5,
+  fontface = "bold"
+) +
+  
+  facet_wrap(~ Species, scales = "free_y") +
+  
+  labs(
+    x = "Year",
+    y = "Sapflow mean (black) / Tree-ring z-score (green)",
+    title = "Species-Level Sapflow and Individual Tree-Ring Series"
+  ) +
+  
+  theme_bw() +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    strip.background = element_rect(fill = "grey90"),
+    strip.text = element_text(face = "bold")
+  )
+
+
+
+
+
+
+
+
+
+
+
+seasonal_sapflow <- sap_complete_season %>%
+  filter(Species %in% c("PIPO", "PISF", "PSME")) %>%
+  group_by(Species, YEAR, season) %>%
+  rename() %>%
+  summarise(
+    seasonal_mean_sapflow = mean(sapflow, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+yearly_seasonal_sap <- sap_complete_season %>%
+  filter(Species %in% c("PIPO", "PISF", "PSME")) %>%
+  group_by(Species, YEAR, season) %>%
+  summarise(
+    seasonal_mean_sapflow = mean(sapflow, na.rm = TRUE),
+    .groups = "drop"
+  )
+sap_ring_combined <- yearly_seasonal_sap %>%
+  left_join(treering_tree_years, by = c("Species", "YEAR"))
+library(dplyr)
+
+seasonal_correlations <- sap_ring_combined %>%
+  group_by(Species, season) %>%
+  summarise(
+    correlation = cor(seasonal_mean_sapflow, value, use = "complete.obs"),
+    .groups = "drop"
+  )
+
+seasonal_correlations
+
+library(ggplot2)
+
+ggplot(seasonal_correlations, aes(x = season, y = correlation, fill = season)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = round(correlation, 2)), 
+            vjust = ifelse(seasonal_correlations$correlation >= 0, -0.3, 1.2),
+            size = 4) +
+  facet_wrap(~Species) +
+  scale_fill_brewer(palette = "Set2") +
+  ylim(-1, 1) +
+  labs(
+    title = "Seasonal Sap Flux vs Tree-Ring Correlation by Species",
+    x = "Season",
+    y = "Pearson Correlation"
+  ) +
+  theme_minimal(base_size = 25) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+    axis.text.y = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "none"
+  )
+
+
+
+
+
+
+
+################SAPFLUX-relationship with RWI################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+################species sap flow##############
+sapflow_long <- sapflow_filled %>%
+  pivot_longer(
+    cols = c(PISF1s:PSME2n),
+    names_to  = "sensor",
+    values_to = "sapflow"
+  ) %>%
+  mutate(
+    species = str_sub(sensor, 1, 4),
+    aspect  = str_sub(sensor, -1)
+  )
+
+species_TOD_DOY_YEAR <- sapflow_long %>%
+  group_by(species, DOY, TOD, YEAR) %>%
+  summarise(
+    mean_sapflow = mean(sapflow, na.rm = TRUE),
+    sd_sapflow   = sd(sapflow,   na.rm = TRUE),
+    n            = sum(!is.na(sapflow)),
+    .groups = "drop"
+  )
+print(species_TOD_DOY_YEAR)
+
+
+species_TOD_summary <- species_TOD_DOY_YEAR %>%
+  group_by(species, TOD) %>%
+  summarise(
+    mean_sapflow = mean(mean_sapflow, na.rm = TRUE),
+    sd_sapflow   = sd(mean_sapflow,   na.rm = TRUE),
+    .groups = "drop"
+  )
+
+windows()
+ggplot(species_TOD_summary, aes(x = TOD, y = mean_sapflow, color = species, fill = species)) +
+  geom_ribbon(aes(ymin = mean_sapflow - sd_sapflow,
+                  ymax = mean_sapflow + sd_sapflow),
+              alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1) +
+  labs(title = "Species Mean Sapflow by Time of Day",
+       x = "Time of Day (half-hour)", y = "Mean Sapflow") +
+  theme_bw()
+
+
+
+################species sap flow##############
+
+
+
+
+
+
+
+
+
+
+
+
+
+################SAPWOOD AREA RECONSTRUCTION###########################
+
+
+# ── Shared color palettes ─────────────────────────────────────────────────────
+species_colors <- c("PIPO" = "#D55E00", "PISF" = "#0072B2", "PSME" = "#009E73")
+
+season_colors  <- c(
+  "pre-monsoon" = "#E69F00",
+  "monsoon"     = "#56B4E9",
+  "fall"        = "#CC79A7",
+  "winter"      = "#999999"
+)
+
+
+
+
+
+
+# Define DBH values per Species
+dbh_list <- list(
+  PIPO = c(22.3, 29.2, 43.5, 27.1),
+  PISF = c(31.9, 33.4, 49.8),
+  PSME = c(20, 37.1)
+)
+
+# Tolerance (e.g., ±5 cm)
+tol <- 1
+
+library(dplyr)
+
+# ── Filter DBH recon by species-specific DBH values ──────────────────────────
+filter_by_species_dbh <- function(df, dbh_list, tol) {
+  df %>%
+    rowwise() %>%
+    filter(
+      any(abs(DBH - dbh_list[[Species]]) <= tol)
+    ) %>%
+    ungroup()
+}
+
+MBA_DBH_recon <- MBA_DBH_recon_results %>%
+  select(-matches("^year_18|^year_20(0[0-8])")) 
+
+MBB_DBH_recon <- MBB_DBH_recon_results %>%
+  select(-matches("^year_18|^year_20(0[0-8])")) 
+
+MBC_DBH_recon <- MBC_DBH_recon_results %>%
+  select(-matches("^year_18|^year_20(0[0-8])")) 
+# Quick check
+cat("MBA rows:", nrow(MBA_DBH_recon), "\n")
+cat("MBB rows:", nrow(MBB_DBH_recon), "\n")
+cat("MBC rows:", nrow(MBC_DBH_recon), "\n")
+
+#MBA_DBH_recon %>% count(Species, DBH)
+#MBB_DBH_recon %>% count(Species, DBH)
+#MBC_DBH_recon %>% count(Species, DBH)
+library(dplyr)
+
+# Sapwood area calculation function
+calc_sapwood <- function(DBH, B1, B2) {
+  exp(B1 * log(as.numeric(DBH)) + log(B2))
+}
+
+# Apply sapwood calculation to all relevant year columns
+MBA_sapwood <- MBA_DBH_recon %>%
+  mutate(across(
+    3:16,   # columns for years
+    ~ case_when(
+      Species == "PIPO" ~ calc_sapwood(.x, 1.93, 0.458),
+      Species == "PISF" ~ calc_sapwood(.x, 1.69, 0.759),
+      Species == "PSME" ~ calc_sapwood(.x, 1.57, 1.36),
+      TRUE ~ NA_real_
+    )
+  ))
+MBB_sapwood <- MBB_DBH_recon %>%
+  mutate(across(
+    3:16,   # columns for years
+    ~ case_when(
+      Species == "PIPO" ~ calc_sapwood(.x, 1.93, 0.458),
+      Species == "PISF" ~ calc_sapwood(.x, 1.69, 0.759),
+      Species == "PSME" ~ calc_sapwood(.x, 1.57, 1.36),
+      TRUE ~ NA_real_
+    )
+  ))
+MBC_sapwood <- MBC_DBH_recon %>%
+  mutate(across(
+    3:16,   # columns for years
+    ~ case_when(
+      Species == "PIPO" ~ calc_sapwood(.x, 1.93, 0.458),
+      Species == "PISF" ~ calc_sapwood(.x, 1.69, 0.759),
+      Species == "PSME" ~ calc_sapwood(.x, 1.57, 1.36),
+      TRUE ~ NA_real_
+    )
+  ))
+# Combine all sites
+MB_sapwood_all <- bind_rows(
+  MBA = MBA_sapwood,
+  MBB  = MBB_sapwood,
+  MBC  = MBC_sapwood,
+  .id  = "site"
+)
+
+
+
+
+
+################SAPWOOD AREA RECONSTRUCTION###########################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+################SAPWOOD AREA x sapflow RECONSTRUCTION###########################
+
+# ----------------------------------------------------------
+# STEP 1: Pivot sapwood to long format (one row per tree × year)
+# ----------------------------------------------------------
+MB_sapwood_long <- MB_sapwood_all %>%
+  pivot_longer(
+    cols      = starts_with("year_"),
+    names_to  = "YEAR",
+    values_to = "sapwood_area_cm2"
+  ) %>%
+  mutate(YEAR = as.integer(str_extract(YEAR, "\\d{4}")))
+
+# Check
+head(MB_sapwood_long)
+# site | Species | DBH | YEAR | sapwood_area_cm2
+
+# ----------------------------------------------------------
+# STEP 2: Match tree-level sapwood to species TOD×DOY×YEAR sapflow
+# ----------------------------------------------------------
+# species_TOD_DOY_YEAR already has: species, DOY, TOD, YEAR, mean_sapflow, sd_sapflow
+
+tree_water_use <- MB_sapwood_long %>%
+  rename(species = Species) %>%
+  left_join(
+    species_TOD_DOY_YEAR,
+    by = c("species", "YEAR"),
+    relationship = "many-to-many"   # each tree × year joins to all DOY×TOD rows
+  ) %>%
+  mutate(
+    # whole-tree water use = sapflow (per cm2) × sapwood area (cm2)
+    # result in same units as sapflow × cm2 (e.g., g/hr or ml/hr per tree)
+    tree_water_use_mean = mean_sapflow * sapwood_area_cm2,
+    tree_water_use_sd   = sd_sapflow   * sapwood_area_cm2
+  )
+
+# Check structure
+glimpse(tree_water_use)
+# site | species | DBH | YEAR | sapwood_area_cm2 | DOY | TOD | 
+# mean_sapflow | sd_sapflow | tree_water_use_mean | tree_water_use_sd
+
+# ----------------------------------------------------------
+# STEP 3: Optional — summarise to species level per DOY×TOD×YEAR
+# ----------------------------------------------------------
+species_water_use <- tree_water_use %>%
+  group_by(species, YEAR, DOY, TOD) %>%
+  summarise(
+    mean_water_use = mean(tree_water_use_mean, na.rm = TRUE),
+    sd_water_use   = sd(tree_water_use_mean,   na.rm = TRUE),
+    n_trees        = n_distinct(DBH),
+    .groups = "drop"
+  )
+
+# ----------------------------------------------------------
+# STEP 4: Quick diurnal plot to check output
+# ----------------------------------------------------------
+species_water_use_TOD <- species_water_use %>%
+  group_by(species, TOD) %>%
+  summarise(
+    mean_water_use = mean(mean_water_use, na.rm = TRUE),
+    sd_water_use   = sd(mean_water_use,   na.rm = TRUE),
+    .groups = "drop"
+  )
+
+windows()
+ggplot(species_water_use_TOD, 
+       aes(x = TOD, y = mean_water_use, color = species, fill = species)) +
+  geom_ribbon(aes(ymin = mean_water_use - sd_water_use,
+                  ymax = mean_water_use + sd_water_use),
+              alpha = 0.2, color = NA) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = species_colors) +
+  scale_fill_manual(values  = species_colors) +
+  labs(title = "Whole-Tree Water Use by Time of Day",
+       x = "Time of Day (half-hour)",
+       y = "Sap Flux (sapflow × sapwood area)",
+       color = "Species", fill = "Species") +
+  theme_bw()
+
+
+################SAPWOOD AREA x sapflow RECONSTRUCTION###########################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ----------------------------------------------------------
+# BIOMASS OVERLAY from biomass_recon
+# ----------------------------------------------------------
+# ----------------------------------------------------------
+# BUILD seasonal_total_species (missing from your script)
+# ----------------------------------------------------------
+seasonal_total_species <- species_water_use %>%
+  filter(YEAR >= 2010 & YEAR <= 2021) %>%        # <-- filter here
+  mutate(
+    season = case_when(
+      DOY >= 182 & DOY <= 273 ~ "monsoon",       # Jul–Sep
+      DOY >= 91  & DOY <= 181 ~ "pre-monsoon",   # Apr–Jun
+      DOY >= 274 & DOY <= 304 ~ "fall",           # Oct
+      TRUE                    ~ "winter"           # Nov–Mar
+    )
+  ) %>%
+  group_by(species, YEAR, season) %>%
+  summarise(
+    mean_total = mean(mean_water_use, na.rm = TRUE),
+    sd_total   = sd(mean_water_use,   na.rm = TRUE),
+    n          = n(),
+    se_total   = sd_total / sqrt(n),
+    .groups = "drop"
+  ) %>%
+  mutate(season = factor(season, levels = c("pre-monsoon", "monsoon", "fall", "winter")))
+
+
+# Get the treeIDs that passed the DBH filter
+matched_ids <- bind_rows(
+  MBA_sub %>% mutate(Plot = "MBA"),
+  MBB_sub %>% mutate(Plot = "MBB"),
+  MBC_sub %>% mutate(Plot = "MBC")
+) %>% distinct(treeID, Species, Plot)
+
+# Filter biomass_recon to only those trees
+biomass_recon_matched <- biomass_recon %>%
+  inner_join(matched_ids, by = c("treeID", "Species", "Plot"))
+# ----------------------------------------------------------
+# BIOMASS OVERLAY
+# ----------------------------------------------------------
+biomass_overlay <- biomass_recon_matched %>%
+  filter(Year >= 2010, Year <= 2021) %>%
+  group_by(Species, Year) %>%
+  summarise(
+    Mean_biomass = mean(Biomass_t, na.rm = TRUE),
+    SD_biomass   = sd(Biomass_t,   na.rm = TRUE),
+    N_trees      = n(),
+    SE_biomass   = SD_biomass / sqrt(N_trees),
+    .groups = "drop"
+  ) %>%
+  arrange(Species, Year) %>%
+  group_by(Species) %>%
+  mutate(
+    increment_kg_yr = Mean_biomass - lag(Mean_biomass),
+    sd_increment    = sqrt(SD_biomass^2 + lag(SD_biomass)^2),
+    se_increment    = sd_increment / sqrt(N_trees),
+    ci95_inc_lower  = increment_kg_yr - 1.96 * se_increment,
+    ci95_inc_upper  = increment_kg_yr + 1.96 * se_increment
+  ) %>%
+  ungroup() %>%
+  filter(!is.na(increment_kg_yr)) %>%
+  rename(species = Species, YEAR = Year) %>%
+  mutate(season = factor("annual", levels = c("pre-monsoon", "monsoon", "fall", "winter")))
+# Biomass increment is annual — replicated across all seasons below
+
+# Replicate biomass bars into all 4 season panels
+biomass_overlay_all_seasons <- expand_grid(
+  season = factor(c("pre-monsoon", "monsoon", "fall", "winter"),
+                  levels = c("pre-monsoon", "monsoon", "fall", "winter"))
+) %>%
+  cross_join(biomass_overlay %>% select(species, YEAR, increment_kg_yr,
+                                        ci95_inc_lower, ci95_inc_upper))
+
+# ----------------------------------------------------------
+# SCALE FACTOR: map biomass increment onto sap flux axis
+# ----------------------------------------------------------
+scale_factor <- max(seasonal_total_species$mean_total, na.rm = TRUE) /
+  max(biomass_overlay_all_seasons$increment_kg_yr, na.rm = TRUE)
+
+# ----------------------------------------------------------
+# ----------------------------------------------------------
+# COMPUTE STATS
+# ----------------------------------------------------------
+stats_df <- seasonal_total_species %>%
+  left_join(
+    biomass_overlay %>% select(species, YEAR, increment_kg_yr),
+    by = c("species", "YEAR")
+  ) %>%
+  filter(!is.na(increment_kg_yr) & !is.na(mean_total)) %>%
+  group_by(species, season) %>%
+  summarise(
+    r              = cor(mean_total, increment_kg_yr, use = "complete.obs"),
+    pval           = cor.test(mean_total, increment_kg_yr)$p.value,
+    n              = n(),
+    mean_increment = mean(increment_kg_yr, na.rm = TRUE),   # mean biomass increment
+    mean_wateruse  = mean(mean_total,      na.rm = TRUE),   # mean water use
+    .groups = "drop"
+  ) %>%
+  mutate(
+    sig_stars = case_when(
+      pval < 0.001 ~ "***",
+      pval < 0.01  ~ "**",
+      pval < 0.05  ~ "*",
+      pval < 0.1   ~ "†",
+      TRUE         ~ "ns"
+    ),
+    label = paste0(
+      species, ": r=", round(r, 2), " ", sig_stars, " p=", round(pval, 3), "\n",
+      "mean growth = ", round(mean_increment, 1), " ton yr⁻¹\n",
+      "mean water use = ", round(mean_wateruse, 0), " L yr⁻¹"
+    ),
+    y_rank = as.numeric(factor(species, levels = c("PIPO", "PISF", "PSME"))),
+    season = factor(season, levels = c("pre-monsoon", "monsoon", "fall", "winter"))
+  )
+
+# ----------------------------------------------------------
+# ANCHOR LABELS: fixed top-left using actual panel y range
+# ----------------------------------------------------------
+# ----------------------------------------------------------
+# Y RANGE FIRST
+# ----------------------------------------------------------
+y_range_per_season <- seasonal_total_species %>%
+  group_by(season) %>%
+  summarise(
+    y_max   = max(mean_total + se_total, na.rm = TRUE),
+    y_min   = min(mean_total - se_total, na.rm = TRUE),
+    y_range = y_max - y_min,
+    .groups = "drop"
+  )
+
+
+# ----------------------------------------------------------
+# STATS DF - summary table only
+# ----------------------------------------------------------
+stats_df <- seasonal_total_species %>%
+  left_join(
+    biomass_overlay %>% select(species, YEAR, increment_kg_yr),
+    by = c("species", "YEAR")
+  ) %>%
+  filter(!is.na(increment_kg_yr) & !is.na(mean_total)) %>%
+  group_by(species, season) %>%
+  summarise(
+    mean_increment = mean(increment_kg_yr, na.rm = TRUE),
+    sd_increment   = sd(increment_kg_yr,   na.rm = TRUE),
+    mean_wateruse  = mean(mean_total,       na.rm = TRUE),
+    sd_wateruse    = sd(mean_total,         na.rm = TRUE),
+    n              = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(season = factor(season, levels = c("pre-monsoon", "monsoon", "fall", "winter"))) %>%
+  arrange(season, species)
+
+print(stats_df)
+# ----------------------------------------------------------
+# PLOT
+# ----------------------------------------------------------
+windows()
+ggplot() +
+  
+  geom_col(
+    data = biomass_overlay_all_seasons,
+    aes(x = YEAR, y = increment_kg_yr * scale_factor, fill = species),
+    position = position_dodge(0.8),
+    width = 0.7,
+    alpha = 0.30
+  ) +
+  
+  geom_ribbon(
+    data = seasonal_total_species,
+    aes(x = YEAR,
+        ymin = mean_total - se_total,
+        ymax = mean_total + se_total,
+        fill = species),
+    alpha = 0.15
+  ) +
+  
+  geom_line(
+    data = seasonal_total_species,
+    aes(x = YEAR, y = mean_total, color = species),
+    linewidth = 1.2
+  ) +
+  
+  geom_point(
+    data = seasonal_total_species,
+    aes(x = YEAR, y = mean_total, color = species),
+    size = 2.5
+  ) +
+  
+  scale_y_continuous(
+    name     = "Total Sap Flux (sapflow × sapwood, summed)",
+    sec.axis = sec_axis(~ . / scale_factor,
+                        name = "Mean Biomass Increment (ton yr⁻¹)")
+  ) +
+  scale_x_continuous(
+    breaks = 2010:2021,
+    limits = c(2010, 2021)
+  ) +
+  scale_color_manual(values = species_colors) +
+  scale_fill_manual(values  = species_colors) +
+  
+  facet_wrap(~ season, scales = "fixed", nrow = 2) +
+  
+  labs(
+    title    = "Seasonal Sap Flux & Annual Biomass Increment by Species (2010–2021)",
+    subtitle = "Lines + ribbon = seasonal whole-tree sap flux  |  Bars = annual biomass increment",
+    x        = "Year",
+    color    = "Species", fill = "Species"
+  ) +
+  theme_bw(base_size = 20) +
+  theme(
+    axis.text.x        = element_text(angle = 45, hjust = 1),
+    strip.background   = element_rect(fill = "grey90"),
+    strip.text         = element_text(face = "bold"),
+    legend.position    = "bottom",
+    panel.grid.minor   = element_blank(),
+    axis.title.y.right = element_text(color = "grey40"),
+    axis.text.y.right  = element_text(color = "grey40")
+  )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ==========================================================
+# TREND ANALYSIS — Mt. Bigelow Sap Flux, Climate & Biomass
+# ==========================================================
+library(lme4)
+library(lmerTest)   # gives p-values for lmer
+library(broom.mixed)
+library(ggpubr)
+library(patchwork)
+
+# ==========================================================
+# 1. SAP FLUX TEMPORAL TRENDS BY SPECIES x SEASON
+# Uses: seasonal_total_species (already built in your code)
+# ==========================================================
+sap_trend_results <- seasonal_total_species %>%
+  group_by(species, season) %>%
+  filter(sum(!is.na(mean_total)) >= 3) %>%
+  group_modify(~ {
+    mod <- lm(mean_total ~ YEAR, data = .x)
+    tidy(mod) %>%
+      filter(term == "YEAR") %>%
+      mutate(
+        r2        = summary(mod)$r.squared,
+        direction = ifelse(estimate > 0, "Increasing", "Declining")
+      )
+  }) %>%
+  ungroup() %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ "ns"
+  ))
+
+print(sap_trend_results %>% select(species, season, estimate, r2, p.value, sig, direction))
+
+# ==========================================================
+# 2. BIOMASS TEMPORAL TRENDS BY SPECIES
+# Uses: biomass_overlay (already built in your code)
+# ==========================================================
+biomass_trend_results <- biomass_overlay %>%
+  group_by(species) %>%
+  filter(sum(!is.na(increment_kg_yr)) >= 3) %>%
+  group_modify(~ {
+    mod <- lm(increment_kg_yr ~ YEAR, data = .x)
+    tidy(mod) %>%
+      filter(term == "YEAR") %>%
+      mutate(r2 = summary(mod)$r.squared)
+  }) %>%
+  ungroup() %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ "ns"
+  ))
+
+print(biomass_trend_results %>% select(species, estimate, r2, p.value, sig))
+
+# ==========================================================
+# 3. CLIMATE TEMPORAL TRENDS (PPT, VPD, TMEAN) BY SEASON
+# Uses: prism_seasonal (already built in your code)
+# ==========================================================
+climate_trend_results <- prism_seasonal %>%
+  pivot_longer(cols = c(sum_ppt, mean_tmean, mean_vpd),
+               names_to = "variable", values_to = "value") %>%
+  group_by(season, variable) %>%
+  filter(sum(!is.na(value)) >= 3) %>%
+  group_modify(~ {
+    mod <- lm(value ~ YEAR, data = .x)
+    tidy(mod) %>%
+      filter(term == "YEAR") %>%
+      mutate(r2 = summary(mod)$r.squared)
+  }) %>%
+  ungroup() %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ "ns"
+  ))
+
+print(climate_trend_results %>% select(season, variable, estimate, r2, p.value, sig))
+
+# ==========================================================
+# 4. SAP FLUX ~ VPD TREND (is VPD suppressing sap flux?)
+# Uses: sap_clim_year (already built in your code)
+# ==========================================================
+vpd_sap_results <- sap_clim_year %>%
+  group_by(species) %>%
+  filter(sum(!is.na(mean_sap) & !is.na(mean_vpd)) >= 3) %>%
+  group_modify(~ {
+    mod <- lm(mean_sap ~ mean_vpd + sum_ppt, data = .x)
+    tidy(mod) %>%
+      filter(term %in% c("mean_vpd", "sum_ppt")) %>%
+      mutate(r2 = summary(mod)$r.squared)
+  }) %>%
+  ungroup() %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    TRUE            ~ "ns"
+  ))
+
+print(vpd_sap_results)
+
+# ==========================================================
+# 5. WUE PROXY TREND (biomass per unit sapflow over time)
+# Uses: sap_clim_year
+# ==========================================================
+wue_data <- sap_clim_year %>%
+  filter(mean_sap > 0 & !is.na(increment_kg_yr)) %>%
+  mutate(WUE = increment_kg_yr / mean_sap)
+
+wue_trend_results <- wue_data %>%
+  group_by(species) %>%
+  filter(sum(!is.na(WUE)) >= 3) %>%
+  group_modify(~ {
+    mod <- lm(WUE ~ YEAR, data = .x)
+    tidy(mod) %>%
+      filter(term == "YEAR") %>%
+      mutate(r2 = summary(mod)$r.squared)
+  }) %>%
+  ungroup() %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ "ns"
+  ))
+
+print(wue_trend_results)
+
+# ==========================================================
+# 6. VISUALIZE ALL TRENDS
+# ==========================================================
+
+# --- 6a. Sap flux trends by species x season ---
+p_sap_trends <- ggplot(seasonal_total_species,
+                       aes(x = YEAR, y = mean_total, color = species)) +
+  geom_point(size = 1.8, alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.15) +
+  geom_text(data = sap_trend_results,
+            aes(x = 2019, y = Inf,
+                label = paste0("r²=", round(r2, 2), " ", sig)),
+            vjust = 1.5, size = 3, show.legend = FALSE) +
+  facet_grid(species ~ season) +
+  scale_color_manual(values = species_colors) +
+  labs(title = "Sap Flux Temporal Trends by Species & Season",
+       x = "Year", y = "Total Sap Flux (L)") +
+  theme_bw(base_size = 10) +
+  theme(legend.position = "none",
+        strip.text = element_text(face = "bold"))
+
+# --- 6b. Biomass trends by species ---
+p_bio_trends <- ggplot(biomass_overlay,
+                       aes(x = YEAR, y = increment_kg_yr, color = species)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.15) +
+  geom_text(data = biomass_trend_results,
+            aes(x = 2019, y = Inf,
+                label = paste0("r²=", round(r2, 2), " ", sig)),
+            vjust = 1.5, size = 3.5, show.legend = FALSE) +
+  facet_wrap(~ species, scales = "free_y") +
+  scale_color_manual(values = species_colors) +
+  labs(title = "Biomass Increment Temporal Trends",
+       x = "Year", y = "Biomass Increment (ton yr⁻¹)") +
+  theme_bw(base_size = 10) +
+  theme(legend.position = "none")
+
+# --- 6c. WUE trend ---
+p_wue <- ggplot(wue_data, aes(x = YEAR, y = WUE, color = species)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.15) +
+  geom_text(data = wue_trend_results,
+            aes(x = 2019, y = Inf,
+                label = paste0("r²=", round(r2, 2), " ", sig)),
+            vjust = 1.5, size = 3.5, show.legend = FALSE) +
+  facet_wrap(~ species, scales = "free_y") +
+  scale_color_manual(values = species_colors) +
+  labs(title = "(Biomass / Sapflow) Over Time",
+       x = "Year", y = "WUE (ton L⁻¹)") +
+  theme_bw(base_size = 10) +
+  theme(legend.position = "bottom")
+
+# --- 6d. VPD trend by season ---
+p_vpd <- ggplot(prism_seasonal, aes(x = YEAR, y = mean_vpd)) +
+  geom_col(fill = "gray70", alpha = 0.5) +
+  geom_smooth(method = "lm", se = TRUE, color = "gray20") +
+  facet_wrap(~ season) +
+  labs(title = "VPD Trend by Season", x = "Year", y = "Mean VPD") +
+  theme_bw(base_size = 10)
+
+# --- Combine ---
+final_trend_plot <- (p_sap_trends) /
+  (p_bio_trends | p_wue) /
+  p_vpd +
+  plot_layout(heights = c(2, 1.2, 1)) +
+  plot_annotation(
+    title = "Mt. Bigelow: Temporal Trend Analysis (2010–2021)",
+    theme = theme(plot.title = element_text(face = "bold", size = 13, hjust = 0.5))
+  )
+
+windows(width = 16, height = 14)
+print(final_trend_plot)
+
+# ==========================================================
+# 7. SUMMARY TABLE
+# ==========================================================
+cat("\n====== SAP FLUX TRENDS ======\n")
+sap_trend_results %>%
+  select(species, season, estimate, r2, p.value, sig, direction) %>%
+  arrange(p.value) %>%
+  print(n = Inf)
+
+cat("\n====== BIOMASS TRENDS ======\n")
+biomass_trend_results %>%
+  select(species, estimate, r2, p.value, sig) %>%
+  print()
+
+cat("\n====== CLIMATE TRENDS ======\n")
+climate_trend_results %>%
+  select(season, variable, estimate, r2, p.value, sig) %>%
+  arrange(variable, season) %>%
+  print(n = Inf)
+
+cat("\n====== WUE TRENDS ======\n")
+wue_trend_results %>%
+  select(species, estimate, r2, p.value, sig) %>%
+  print()
+
+
+
+
+
+
+
+
+# ==========================================================
+# Mt. Bigelow: Complete Analysis Script
+# ==========================================================
+library(tidyverse)
+library(lubridate)
+library(patchwork)
+library(lme4)
+library(lmerTest)
+library(broom)
+library(broom.mixed)
+library(ggpubr)
+library(gt)
+
+# ==========================================================
+# 1. LOAD & PREP PRISM CLIMATE DATA
+# ==========================================================
+prism <- read_csv("//snre-snow/Projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/MtBigelow_PRISM_2010_2021_with_seasons.csv") %>%
+  mutate(
+    date   = as.Date(date),
+    season = factor(season, levels = c("pre-monsoon", "monsoon", "fall", "winter"))
+  )
+
+prism_seasonal <- prism %>%
+  group_by(YEAR, season) %>%
+  summarise(
+    sum_ppt     = sum(ppt,    na.rm = TRUE),
+    mean_tmean  = mean(tmean, na.rm = TRUE),
+    mean_vpdmax = mean(vpdmax, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# ==========================================================
+# 2. SEASONAL SAP FLUX DATA
+# ==========================================================
+seasonal_total_species <- species_water_use %>%
+  filter(YEAR >= 2009 & YEAR <= 2021) %>%
+  filter(!is.na(species), species != "0") %>%
+  mutate(
+    season = case_when(
+      DOY >= 182 & DOY <= 273 ~ "monsoon",
+      DOY >= 91  & DOY <= 181 ~ "pre-monsoon",
+      DOY >= 274 & DOY <= 304 ~ "fall",
+      TRUE                    ~ "winter"
+    ),
+    season = factor(season, levels = c("pre-monsoon", "monsoon", "fall", "winter"))
+  ) %>%
+  group_by(species, YEAR, season) %>%
+  summarise(
+    mean_total = mean(mean_water_use, na.rm = TRUE),
+    sd_total   = sd(mean_water_use,   na.rm = TRUE),
+    n          = n(),
+    se_total   = sd_total / sqrt(n),
+    .groups = "drop"
+  )
+
+# ==========================================================
+# 3. BIOMASS DATA
+# ==========================================================
+matched_ids <- bind_rows(
+  MBA_sub %>% mutate(Plot = "MBA"),
+  MBB_sub %>% mutate(Plot = "MBB"),
+  MBC_sub %>% mutate(Plot = "MBC")
+) %>% distinct(treeID, Species, Plot)
+
+biomass_recon_matched <- biomass_recon %>%
+  inner_join(matched_ids, by = c("treeID", "Species", "Plot"))
+
+biomass_overlay <- biomass_recon_matched %>%
+  filter(Year >= 2009 & Year <= 2021) %>%
+  group_by(Species, Year) %>%
+  summarise(
+    Mean_biomass = mean(Biomass_t, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(Species, Year) %>%
+  group_by(Species) %>%
+  mutate(increment_kg_yr = Mean_biomass - lag(Mean_biomass)) %>%
+  ungroup() %>%
+  filter(!is.na(increment_kg_yr)) %>%
+  rename(species = Species, YEAR = Year)
+
+# Biomass trend lines for plot
+biomass_trend_df <- biomass_overlay %>%
+  group_by(species) %>%
+  filter(sum(!is.na(increment_kg_yr)) >= 2) %>%
+  do({
+    mod <- lm(increment_kg_yr ~ YEAR, data = .)
+    data.frame(
+      YEAR      = range(.$YEAR),
+      trend_val = predict(mod, newdata = data.frame(YEAR = range(.$YEAR)))
+    )
+  }) %>%
+  ungroup()
+
+# ==========================================================
+# 4. YEARLY SAP FLUX + CLIMATE + BIOMASS COMBINED
+# ==========================================================
+sap_clim_year <- seasonal_total_species %>%
+  group_by(species, YEAR) %>%
+  summarise(mean_sap = mean(mean_total, na.rm = TRUE), .groups = "drop") %>%
+  left_join(
+    prism_seasonal %>%
+      group_by(YEAR) %>%
+      summarise(
+        sum_ppt     = sum(sum_ppt,      na.rm = TRUE),
+        mean_vpdmax = mean(mean_vpdmax, na.rm = TRUE),
+        mean_t      = mean(mean_tmean,  na.rm = TRUE),
+        .groups = "drop"
+      ),
+    by = "YEAR"
+  ) %>%
+  left_join(
+    biomass_overlay %>% select(species, YEAR, increment_kg_yr),
+    by = c("species", "YEAR")
+  ) %>%
+  filter(!is.na(mean_sap) & !is.na(increment_kg_yr))
+
+# ==========================================================
+# 5. SPECIES COLORS
+# ==========================================================
+species_colors <- c(PIPO = "#D85A30", PISF = "#378ADD", PSME = "#1D9E75")
+
+# ==========================================================
+# 6. TREND LINES FOR SEASONAL SAP FLUX PLOT
+# ==========================================================
+trend_df <- seasonal_total_species %>%
+  group_by(species, season) %>%
+  filter(sum(!is.na(mean_total)) >= 2) %>%
+  do({
+    mod <- lm(mean_total ~ YEAR, data = .)
+    data.frame(
+      YEAR      = range(.$YEAR),
+      trend_val = predict(mod, newdata = data.frame(YEAR = range(.$YEAR)))
+    )
+  }) %>%
+  ungroup()
+
+# ==========================================================
+# 7. HELPER: SEASONAL PANEL FUNCTION
+# ==========================================================
+make_season_panel <- function(szn, show_legend = FALSE, show_xaxis = FALSE) {
+  sap_data   <- seasonal_total_species %>% filter(season == szn)
+  clim_data  <- prism_seasonal         %>% filter(season == szn)
+  trend_data <- trend_df               %>% filter(season == szn)
+  
+  scale_ppt_s <- max(sap_data$mean_total,     na.rm = TRUE) / max(clim_data$sum_ppt,     na.rm = TRUE)
+  scale_vpd_s <- max(sap_data$mean_total,     na.rm = TRUE) / max(clim_data$mean_vpdmax, na.rm = TRUE)
+  
+  ggplot() +
+    geom_col(data = clim_data,
+             aes(x = YEAR, y = sum_ppt * scale_ppt_s),
+             fill = "#93C6E0", alpha = 0.3, width = 0.85) +
+    geom_line(data = clim_data,
+              aes(x = YEAR, y = mean_vpdmax * scale_vpd_s),
+              color = "gray40", linetype = "longdash", linewidth = 0.7, alpha = 0.8) +
+    geom_ribbon(data = sap_data,
+                aes(x = YEAR, ymin = mean_total - se_total,
+                    ymax = mean_total + se_total, fill = species),
+                alpha = 0.15) +
+    geom_line(data = sap_data,
+              aes(x = YEAR, y = mean_total, color = species), linewidth = 1.2) +
+    geom_point(data = sap_data,
+               aes(x = YEAR, y = mean_total, color = species), size = 2.2) +
+    geom_line(data = trend_data,
+              aes(x = YEAR, y = trend_val, color = species),
+              linetype = "dashed", linewidth = 0.7, alpha = 0.75) +
+    scale_y_continuous(
+      name      = "Total Sap Flux (L)",
+      sec.axis  = sec_axis(~ . / scale_ppt_s, name = "PPT (mm)")
+    ) +
+    scale_x_continuous(breaks = seq(2010, 2021, 2), limits = c(2009.5, 2021.2)) +
+    scale_color_manual(values = species_colors) +
+    scale_fill_manual(values  = species_colors) +
+    labs(
+      title = szn,
+      x     = if (show_xaxis) "Year" else NULL,
+      color = "Species", fill = "Species"
+    ) +
+    theme_bw(base_size = 15) +
+    theme(
+      plot.title   = element_text(face = "bold", hjust = 0.5, size = 11),
+      axis.text.x  = if (show_xaxis) element_text(angle = 45, hjust = 1) else element_blank(),
+      axis.ticks.x = if (show_xaxis) element_line() else element_blank(),
+      axis.title.x = element_blank(),
+      legend.position  = if (show_legend) "bottom" else "none",
+      panel.grid.minor = element_blank()
+    )
+}
+
+# ==========================================================
+# 8. BUILD SEASONAL SAP FLUX PANELS
+# ==========================================================
+p_premonsoon <- make_season_panel("pre-monsoon", show_legend = FALSE, show_xaxis = FALSE)
+p_monsoon    <- make_season_panel("monsoon",     show_legend = FALSE, show_xaxis = FALSE)
+p_fall       <- make_season_panel("fall",        show_legend = FALSE, show_xaxis = TRUE)
+p_winter     <- make_season_panel("winter",      show_legend = TRUE,  show_xaxis = TRUE)
+
+# ==========================================================
+# 9. BIOMASS PANEL
+# ==========================================================
+p_biomass <- ggplot(biomass_overlay,
+                    aes(x = YEAR, y = increment_kg_yr, fill = species)) +
+  geom_col(position = position_dodge(width = 0.7), width = 0.6, alpha = 0.8) +
+  geom_line(data = biomass_trend_df,
+            aes(x = YEAR, y = trend_val, color = species),
+            linetype = "dashed", linewidth = 1) +
+  geom_point(aes(x = YEAR, y = increment_kg_yr, color = species),
+             position = position_dodge(width = 0.7), size = 2) +
+  scale_x_continuous(breaks = seq(2010, 2021, 1), limits = c(2009.5, 2021.2)) +
+  scale_fill_manual(values  = species_colors) +
+  scale_color_manual(values = species_colors) +
+  labs(title = "Annual Biomass Increment",
+       x = "Year", y = "Biomass Increment (ton yr⁻¹)",
+       color = "Species", fill = "Species") +
+  theme_bw(base_size = 15) +
+  theme(
+    plot.title       = element_text(face = "bold", hjust = 0.5, size = 12),
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    legend.position  = "bottom",
+    panel.grid.minor = element_blank()
+  )
+
+# ==========================================================
+# 10. WINDOW 1: MAIN SAP FLUX + BIOMASS PLOT
+# ==========================================================
+top_grid   <- (p_premonsoon | p_monsoon) / (p_fall | p_winter)
+final_plot <- top_grid / p_biomass +
+  plot_layout(heights = c(2, 2, 1.2)) +
+  plot_annotation(
+    title    = "Mt. Bigelow: Seasonal Sap Flux + Climate & Annual Biomass Increment (2010–2021)",
+    subtitle = "Solid = sap flux | Dashed = sap flux trend | Blue bars = PPT | Gray dashed = VPDmax | Bottom = biomass increment",
+    theme    = theme(
+      plot.title    = element_text(face = "bold", size = 13, hjust = 0.5),
+      plot.subtitle = element_text(size = 9, hjust = 0.5, color = "grey40")
+    )
+  )
+
+windows(width = 14, height = 12)
+print(final_plot)
+
+# ==========================================================
+# 11. TREND ANALYSES
+# ==========================================================
+
+# --- 11a. Sap flux trends by species x season ---
+sap_trend_results <- seasonal_total_species %>%
+  filter(!is.na(species), species != "0") %>%
+  group_by(species, season) %>%
+  filter(sum(!is.na(mean_total)) >= 3) %>%
+  group_modify(~ {
+    mod <- lm(mean_total ~ YEAR, data = .x)
+    tidy(mod) %>%
+      filter(term == "YEAR") %>%
+      mutate(
+        r2        = summary(mod)$r.squared,
+        direction = ifelse(estimate > 0, "Increasing", "Declining")
+      )
+  }) %>%
+  ungroup() %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ "ns"
+  ))
+
+# --- 11b. Biomass trends by species ---
+biomass_trend_results <- biomass_overlay %>%
+  filter(!is.na(species), species != "0") %>%
+  group_by(species) %>%
+  filter(sum(!is.na(increment_kg_yr)) >= 3) %>%
+  group_modify(~ {
+    mod <- lm(increment_kg_yr ~ YEAR, data = .x)
+    tidy(mod) %>%
+      filter(term == "YEAR") %>%
+      mutate(r2 = summary(mod)$r.squared)
+  }) %>%
+  ungroup() %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ "ns"
+  ))
+
+# --- 11c. Climate trends by season ---
+climate_trend_results <- prism_seasonal %>%
+  pivot_longer(
+    cols      = c(sum_ppt, mean_tmean, mean_vpdmax),
+    names_to  = "variable",
+    values_to = "value"
+  ) %>%
+  group_by(season, variable) %>%
+  filter(sum(!is.na(value)) >= 3) %>%
+  group_modify(~ {
+    mod <- lm(value ~ YEAR, data = .x)
+    tidy(mod) %>%
+      filter(term == "YEAR") %>%
+      mutate(r2 = summary(mod)$r.squared)
+  }) %>%
+  ungroup() %>%
+  mutate(
+    sig = case_when(
+      p.value < 0.001 ~ "***",
+      p.value < 0.01  ~ "**",
+      p.value < 0.05  ~ "*",
+      p.value < 0.1   ~ ".",
+      TRUE            ~ "ns"
+    ),
+    direction = ifelse(estimate > 0, "Increasing", "Declining")
+  )
+
+# --- 11d. Sap flux ~ VPDmax + PPT regression ---
+vpd_sap_results <- sap_clim_year %>%
+  group_by(species) %>%
+  filter(sum(!is.na(mean_sap) & !is.na(mean_vpdmax)) >= 3) %>%
+  group_modify(~ {
+    mod <- lm(mean_sap ~ mean_vpdmax + sum_ppt, data = .x)
+    tidy(mod) %>%
+      filter(term %in% c("mean_vpdmax", "sum_ppt")) %>%
+      mutate(r2 = summary(mod)$r.squared)
+  }) %>%
+  ungroup() %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    TRUE            ~ "ns"
+  ))
+
+# --- 11e. WUE proxy trend ---
+wue_data <- sap_clim_year %>%
+  filter(mean_sap > 0 & !is.na(increment_kg_yr)) %>%
+  mutate(WUE = increment_kg_yr / mean_sap)
+
+wue_trend_results <- wue_data %>%
+  group_by(species) %>%
+  filter(sum(!is.na(WUE)) >= 3) %>%
+  group_modify(~ {
+    mod <- lm(WUE ~ YEAR, data = .x)
+    tidy(mod) %>%
+      filter(term == "YEAR") %>%
+      mutate(r2 = summary(mod)$r.squared)
+  }) %>%
+  ungroup() %>%
+  mutate(sig = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    p.value < 0.1   ~ ".",
+    TRUE            ~ "ns"
+  ))
+
+# ==========================================================
+# 12. CONSOLE SUMMARY TABLES
+# ==========================================================
+cat("\n====== SAP FLUX TRENDS ======\n")
+sap_trend_results %>%
+  select(species, season, estimate, r2, p.value, sig, direction) %>%
+  arrange(p.value) %>%
+  print(n = Inf)
+
+cat("\n====== BIOMASS TRENDS ======\n")
+biomass_trend_results %>%
+  select(species, estimate, r2, p.value, sig) %>%
+  print()
+
+cat("\n====== CLIMATE TRENDS ======\n")
+climate_trend_results %>%
+  select(season, variable, estimate, r2, p.value, sig, direction) %>%
+  arrange(variable, season) %>%
+  print(n = Inf)
+
+cat("\n====== VPD + PPT ~ SAP FLUX ======\n")
+vpd_sap_results %>%
+  select(species, term, estimate, r2, p.value, sig) %>%
+  print()
+
+cat("\n====== WUE TRENDS ======\n")
+wue_trend_results %>%
+  select(species, estimate, r2, p.value, sig) %>%
+  print()
+
+# ==========================================================
+# 13. WINDOW 2: SAP FLUX + BIOMASS + WUE TREND PLOTS
+# ==========================================================
+
+# --- Sap flux trends by species x season ---
+p_sap_trends <- ggplot(seasonal_total_species,
+                       aes(x = YEAR, y = mean_total, color = species)) +
+  geom_point(size = 1.8, alpha = 0.7) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.15) +
+  geom_text(
+    data = sap_trend_results,
+    aes(x = 2019, y = Inf, label = paste0("r²=", round(r2, 2), " ", sig)),
+    vjust = 1.5, size = 3, show.legend = FALSE
+  ) +
+  facet_grid(species ~ season) +
+  scale_color_manual(values = species_colors) +
+  labs(title = "Sap Flux Temporal Trends by Species & Season",
+       x = "Year", y = "Total Sap Flux (L)") +
+  theme_bw(base_size = 10) +
+  theme(
+    legend.position  = "none",
+    strip.text       = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+# --- Biomass trends ---
+p_bio_trends <- ggplot(biomass_overlay,
+                       aes(x = YEAR, y = increment_kg_yr, color = species)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.15) +
+  geom_text(
+    data = biomass_trend_results,
+    aes(x = 2019, y = Inf, label = paste0("r²=", round(r2, 2), " ", sig)),
+    vjust = 1.5, size = 3.5, show.legend = FALSE
+  ) +
+  facet_wrap(~ species, scales = "free_y") +
+  scale_color_manual(values = species_colors) +
+  labs(title = "Biomass Increment Temporal Trends",
+       x = "Year", y = "Biomass Increment (ton yr⁻¹)") +
+  theme_bw(base_size = 10) +
+  theme(
+    legend.position  = "none",
+    panel.grid.minor = element_blank()
+  )
+
+# --- WUE trend ---
+p_wue <- ggplot(wue_data, aes(x = YEAR, y = WUE, color = species)) +
+  geom_point(size = 2) +
+  geom_smooth(method = "lm", se = TRUE, alpha = 0.15) +
+  geom_text(
+    data = wue_trend_results,
+    aes(x = 2019, y = Inf, label = paste0("r²=", round(r2, 2), " ", sig)),
+    vjust = 1.5, size = 3.5, show.legend = FALSE
+  ) +
+  facet_wrap(~ species, scales = "free_y") +
+  scale_color_manual(values = species_colors) +
+  labs(title = "WUE Proxy (Biomass / Sap Flux) Over Time",
+       x = "Year", y = "WUE (ton L⁻¹)") +
+  theme_bw(base_size = 10) +
+  theme(
+    legend.position  = "bottom",
+    panel.grid.minor = element_blank()
+  )
+
+window2_plot <- (p_sap_trends) /
+  (p_bio_trends | p_wue) +
+  plot_layout(heights = c(2, 1.2)) +
+  plot_annotation(
+    title = "Mt. Bigelow: Temporal Trend Analysis (2010–2021)",
+    theme = theme(plot.title = element_text(face = "bold", size = 13, hjust = 0.5))
+  )
+
+windows(width = 16, height = 12)
+print(window2_plot)
+
+# ==========================================================
+# 14. WINDOW 3: CLIMATE TRENDS (PPT + VPD separate)
+# ==========================================================
+
+p_ppt <- ggplot(prism_seasonal, aes(x = YEAR, y = sum_ppt)) +
+  geom_col(fill = "#93C6E0", alpha = 0.6, width = 0.8) +
+  geom_smooth(method = "lm", se = TRUE, color = "steelblue4", linewidth = 0.8) +
+  geom_text(
+    data = climate_trend_results %>%
+      filter(variable == "sum_ppt") %>%
+      mutate(season = factor(season, levels = c("pre-monsoon", "monsoon", "fall", "winter"))),
+    aes(x = 2019, y = Inf, label = paste0("r²=", round(r2, 2), " ", sig)),
+    vjust = 1.5, size = 3, inherit.aes = FALSE
+  ) +
+  facet_wrap(~ season, nrow = 1) +
+  scale_x_continuous(breaks = seq(2010, 2021, 2)) +
+  labs(title = "Seasonal PPT Trend", x = "Year", y = "Total PPT (mm)") +
+  theme_bw(base_size = 10) +
+  theme(
+    plot.title       = element_text(face = "bold", hjust = 0.5),
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    strip.text       = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+p_vpd <- ggplot(prism_seasonal, aes(x = YEAR, y = mean_vpdmax)) +
+  geom_col(fill = "gray70", alpha = 0.5, width = 0.8) +
+  geom_smooth(method = "lm", se = TRUE, color = "gray20", linewidth = 0.8) +
+  geom_text(
+    data = climate_trend_results %>%
+      filter(variable == "mean_vpdmax") %>%
+      mutate(season = factor(season, levels = c("pre-monsoon", "monsoon", "fall", "winter"))),
+    aes(x = 2019, y = Inf, label = paste0("r²=", round(r2, 2), " ", sig)),
+    vjust = 1.5, size = 3, inherit.aes = FALSE
+  ) +
+  facet_wrap(~ season, nrow = 1) +
+  scale_x_continuous(breaks = seq(2010, 2021, 2)) +
+  labs(title = "Seasonal VPDmax Trend", x = "Year", y = "Mean VPDmax (hPa)") +
+  theme_bw(base_size = 10) +
+  theme(
+    plot.title       = element_text(face = "bold", hjust = 0.5),
+    axis.text.x      = element_text(angle = 45, hjust = 1),
+    strip.text       = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+
+window3_plot <- p_ppt / p_vpd +
+  plot_layout(heights = c(1, 1)) +
+  plot_annotation(
+    title    = "Mt. Bigelow: Seasonal Climate Trends (2010–2021)",
+    subtitle = "Blue bars = PPT (sum) | Gray bars = VPDmax (mean) | Shading = 95% CI",
+    theme    = theme(
+      plot.title    = element_text(face = "bold", size = 13, hjust = 0.5),
+      plot.subtitle = element_text(size = 9, hjust = 0.5, color = "grey40")
+    )
+  )
+
+windows(width = 14, height = 8)
+print(window3_plot)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ==========================================================
+# 1️⃣ Combine seasonal sap flux with seasonal climate
+# ==========================================================
+sap_clim_seasonal <- seasonal_total_species %>%
+  left_join(prism_seasonal, by=c("YEAR","season"))
+
+# Correlation table: seasonal sap flux vs seasonal climate
+# Remove invalid species and compute correlations safely
+seasonal_sap_clim_stats <- sap_clim_seasonal %>%
+  filter(!is.na(species) & species != "0") %>%
+  group_by(species, season) %>%
+  summarise(
+    r_sap_ppt = if(sum(!is.na(mean_total) & !is.na(mean_ppt)) > 1) 
+      cor(mean_total, mean_ppt, use="complete.obs") 
+    else NA_real_,
+    r_sap_vpd = if(sum(!is.na(mean_total) & !is.na(mean_vpd)) > 1) 
+      cor(mean_total, mean_vpd, use="complete.obs") 
+    else NA_real_,
+    r_sap_t   = if(sum(!is.na(mean_total) & !is.na(mean_tmean)) > 1) 
+      cor(mean_total, mean_tmean, use="complete.obs") 
+    else NA_real_,
+    .groups = "drop"
+  )
+# ==========================================================
+# 2️⃣ Combine yearly biomass with seasonal sap flux
+# ==========================================================
+# Repeat yearly biomass for all 4 seasons
+biomass_seasonal <- biomass_overlay %>%
+  mutate(dummy=1) %>%
+  crossing(tibble(season=factor(c("pre-monsoon","monsoon","fall","winter"), 
+                                levels=c("pre-monsoon","monsoon","fall","winter")))) %>%
+  select(-dummy)
+
+sap_biomass <- seasonal_total_species %>%
+  left_join(biomass_seasonal, by=c("species","YEAR","season")) %>%
+  filter(!is.na(increment_kg_yr))
+
+# Correlation table: seasonal sap flux vs yearly biomass increment
+seasonal_sap_biomass_stats <- sap_biomass %>%
+  group_by(species, season) %>%
+  summarise(
+    r_sap_bio = cor(mean_total, increment_kg_yr, use="complete.obs"),
+    .groups = "drop"
+  )
+
+# Trend table: seasonal sap flux vs yearly biomass increment
+seasonal_sap_biomass_trend <- sap_biomass %>%
+  filter(!is.na(mean_total) & !is.na(increment_kg_yr)) %>%
+  group_by(species, season) %>%
+  summarise(
+    trend_slope = if(n() >= 2) coef(lm(mean_total ~ increment_kg_yr))[2] else NA_real_,
+    trend_intercept = if(n() >= 2) coef(lm(mean_total ~ increment_kg_yr))[1] else NA_real_,
+    .groups = "drop"
+  )
+
+# ==========================================================
+# 3️⃣ Combine yearly biomass with seasonal climate
+# ==========================================================
+sap_clim_bio <- sap_biomass %>%  # biomass_seasonal already merged with seasonal climate
+  left_join(prism_seasonal, by=c("YEAR","season"))
+
+seasonal_bio_clim_stats <- sap_clim_bio %>%
+  group_by(species, season) %>%
+  summarise(
+    r_bio_ppt = cor(increment_kg_yr, mean_ppt, use="complete.obs"),
+    r_bio_vpd = cor(increment_kg_yr, mean_vpd, use="complete.obs"),
+    r_bio_t   = cor(increment_kg_yr, mean_tmean, use="complete.obs"),
+    .groups = "drop"
+  )
+
+# ==========================================================
+# 4️⃣ Output tables
+# ==========================================================
+seasonal_sap_clim_stats      # sap flux vs climate
+seasonal_bio_clim_stats      # biomass vs climate
+seasonal_sap_biomass_trend
+
+
+
+
+
+
+
+
+
+
+
+
+safe_cor_r2 <- function(x, y) {
+  cc <- complete.cases(x, y)
+  if (sum(cc) < 3) return(NA_real_)
+  tryCatch(cor.test(x[cc], y[cc])$estimate^2, error = \(e) NA_real_)
+}
+
+safe_cor_p <- function(x, y) {
+  cc <- complete.cases(x, y)
+  if (sum(cc) < 3) return(NA_real_)
+  tryCatch(cor.test(x[cc], y[cc])$p.value, error = \(e) NA_real_)
+}
+
+# ── sap flux vs climate ───────────────────────────────────────────
+sap_clim_fig <- sap_clim_seasonal %>%
+  filter(!is.na(species) & species != "0") %>%
+  group_by(species, season) %>%
+  summarise(
+    r2_ppt = safe_cor_r2(mean_total, mean_ppt),
+    p_ppt  = safe_cor_p(mean_total, mean_ppt),
+    r2_vpd = safe_cor_r2(mean_total, mean_vpd),
+    p_vpd  = safe_cor_p(mean_total, mean_vpd),
+    r2_t   = safe_cor_r2(mean_total, mean_tmean),
+    p_t    = safe_cor_p(mean_total, mean_tmean),
+    n      = sum(!is.na(mean_total)),          # keep n for reference
+    .groups = "drop"
+  ) %>%
+  pivot_longer(-c(species, season, n),
+               names_to  = c(".value", "predictor"),
+               names_pattern = "(r2|p)_(.+)") %>%
+  mutate(response = "Sap flux")
+
+# ── biomass vs climate ────────────────────────────────────────────
+bio_clim_fig <- sap_clim_bio %>%
+  group_by(species, season) %>%
+  summarise(
+    r2_ppt = safe_cor_r2(increment_kg_yr, mean_ppt),
+    p_ppt  = safe_cor_p(increment_kg_yr, mean_ppt),
+    r2_vpd = safe_cor_r2(increment_kg_yr, mean_vpd),
+    p_vpd  = safe_cor_p(increment_kg_yr, mean_vpd),
+    r2_t   = safe_cor_r2(increment_kg_yr, mean_tmean),
+    p_t    = safe_cor_p(increment_kg_yr, mean_tmean),
+    n      = sum(!is.na(increment_kg_yr)),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(-c(species, season, n),
+               names_to  = c(".value", "predictor"),
+               names_pattern = "(r2|p)_(.+)") %>%
+  mutate(response = "Biomass")
+
+# ── combine & flag ────────────────────────────────────────────────
+all_fig <- bind_rows(sap_clim_fig, bio_clim_fig) %>%
+  filter(!is.na(r2), !is.na(p)) %>%        # drop NA cells
+  mutate(
+    sig      = case_when(
+      p < 0.001 ~ "***",
+      p < 0.01  ~ "**",
+      p < 0.05  ~ "*",
+      p < 0.1   ~ ".",
+      TRUE      ~ ""
+    ),
+    sig_fill = case_when(
+      p < 0.001 ~ "p<0.001",
+      p < 0.01  ~ "p<0.01",
+      p < 0.05  ~ "p<0.05",
+      p < 0.1   ~ "p<0.1",
+      TRUE      ~ "n.s."
+    ),
+    label     = paste0(round(r2, 2), "\n", sig),
+    predictor = factor(predictor, levels = c("ppt","vpd","t"),
+                       labels = c("PPT","VPD","Tmean")),
+    season    = factor(season,
+                       levels = c("pre-monsoon","monsoon","fall","winter")),
+    response  = factor(response, levels = c("Sap flux","Biomass"))
+  )
+
+# ── colors ────────────────────────────────────────────────────────
+sig_colors <- c(
+  "p<0.001" = "#1D9E75",
+  "p<0.01"  = "#5DCAA5",
+  "p<0.05"  = "#9FE1CB",
+  "p<0.1"   = "#FAC775",   # amber for marginal
+  "n.s."    = "grey92"
+)
+
+# ── plot ──────────────────────────────────────────────────────────
+p <- ggplot(all_fig, aes(x = predictor, y = species, fill = sig_fill)) +
+  geom_tile(color = "white", linewidth = 0.6) +
+  geom_text(aes(label = label),
+            size = 2.6, lineheight = 0.9, color = "grey20") +
+  scale_fill_manual(
+    values = sig_colors,
+    breaks = c("p<0.001","p<0.01","p<0.05","p<0.1","n.s."),
+    na.value = "grey80",
+    name = "Significance"
+  ) +
+  facet_grid(response ~ season, scales = "free_y", space = "free_y") +
+  labs(
+    x = NULL, y = NULL,
+    title   = "Seasonal R² — sap flux & biomass vs climate",
+    caption = "R² shown with significance stars; n = observations per group\n. p<0.1  * p<0.05  ** p<0.01  *** p<0.001"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    strip.background = element_rect(fill = "grey94", color = NA),
+    strip.text       = element_text(face = "bold", size = 10),
+    axis.text.x      = element_text(size = 10),
+    axis.text.y      = element_text(face = "italic", size = 9),
+    panel.grid       = element_blank(),
+    legend.position  = "bottom",
+    legend.key.size  = unit(0.5, "cm"),
+    plot.title       = element_text(face = "bold", size = 12),
+    plot.caption     = element_text(color = "grey50", size = 8)
+  )
+
+ggsave("seasonal_r2_heatmap.png", p, width = 10, height = 5, dpi = 300)
+p
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+library(tidyverse)
+library(ggplot2)
+library(patchwork)
+
+# ── yearly means across all species ──────────────────────────────
+sap_trend <- sap_clim_seasonal %>%
+  filter(!is.na(species) & species != "0") %>%
+  group_by(YEAR, season) %>%
+  summarise(mean_sap = mean(mean_total, na.rm = TRUE), .groups = "drop") %>%
+  mutate(var = "Sap flux")
+
+bio_trend <- sap_clim_bio %>%
+  group_by(YEAR, season) %>%
+  summarise(mean_bio = mean(increment_kg_yr, na.rm = TRUE), .groups = "drop") %>%
+  mutate(var = "Biomass")
+
+# ── per-species yearly trends ─────────────────────────────────────
+sap_sp <- sap_clim_seasonal %>%
+  filter(!is.na(species) & species != "0") %>%
+  group_by(species, YEAR, season) %>%
+  summarise(value = mean(mean_total, na.rm = TRUE), .groups = "drop") %>%
+  mutate(var = "Sap flux")
+
+bio_sp <- sap_clim_bio %>%
+  group_by(species, YEAR, season) %>%
+  summarise(value = mean(increment_kg_yr, na.rm = TRUE), .groups = "drop") %>%
+  mutate(var = "Biomass")
+
+all_sp <- bind_rows(sap_sp, bio_sp) %>%
+  mutate(
+    season = factor(season, levels = c("pre-monsoon","monsoon","fall","winter")),
+    var    = factor(var, levels = c("Sap flux","Biomass"))
+  )
+
+# ── normalize to z-score so sap & biomass overlay on same axis ───
+all_sp <- all_sp %>%
+  group_by(var, season) %>%
+  mutate(value_z = (value - mean(value, na.rm=TRUE)) / sd(value, na.rm=TRUE)) %>%
+  ungroup()
+
+# ── overall trend line (loess) ────────────────────────────────────
+overall <- all_sp %>%
+  group_by(var, YEAR, season) %>%
+  summarise(mean_z = mean(value_z, na.rm = TRUE), .groups = "drop")
+
+# ── linear trend stats per species × var × season ────────────────
+trend_stats <- all_sp %>%
+  group_by(species, var, season) %>%
+  summarise(
+    slope   = if (sum(!is.na(value_z)) >= 3)
+      coef(lm(value_z ~ YEAR))[2] else NA_real_,
+    p_trend = if (sum(!is.na(value_z)) >= 3)
+      summary(lm(value_z ~ YEAR))$coefficients[2, 4] else NA_real_,
+    .groups = "drop"
+  ) %>%
+  mutate(
+    sig      = case_when(p_trend < 0.05 ~ "*", p_trend < 0.1 ~ ".", TRUE ~ ""),
+    dir      = case_when(slope > 0 ~ "increasing", slope < 0 ~ "decreasing",
+                         TRUE ~ "flat")
+  )
+
+# ── correlation between sap & biomass trends per species × season ─
+trend_cor <- trend_stats %>%
+  select(species, season, var, slope) %>%
+  pivot_wider(names_from = var, values_from = slope) %>%
+  group_by(season) %>%
+  summarise(
+    r       = tryCatch(cor.test(`Sap flux`, Biomass)$estimate,  error=\(e)NA_real_),
+    p_cor   = tryCatch(cor.test(`Sap flux`, Biomass)$p.value,   error=\(e)NA_real_),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    label = paste0("r=", round(r,2),
+                   ifelse(p_cor < 0.05, "*", ifelse(p_cor < 0.1, ".", "")))
+  )
+
+# ══════════════════════════════════════════════════════════════════
+# PLOT 1 — z-score trend lines overlaid, faceted by season
+# ══════════════════════════════════════════════════════════════════
+p1 <- ggplot(overall, aes(x = YEAR, y = mean_z, color = var)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey80") +
+  geom_line(aes(group = var), linewidth = 0.5, alpha = 0.4) +
+  geom_point(size = 1.5, alpha = 0.6) +
+  geom_smooth(method = "lm", se = TRUE, linewidth = 1, alpha = 0.15) +
+  scale_color_manual(values = c("Sap flux" = "#1D9E75", "Biomass" = "#E8593C"),
+                     name = NULL) +
+  facet_wrap(~ season, nrow = 1) +
+  labs(
+    x = NULL, y = "Z-score (normalized)",
+    title = "Temporal trends: sap flux vs biomass",
+    subtitle = "Z-scores allow direct comparison; shading = 95% CI of linear trend"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position    = "top",
+    panel.grid.minor   = element_blank(),
+    strip.background   = element_rect(fill = "grey94", color = NA),
+    strip.text         = element_text(face = "bold"),
+    plot.title         = element_text(face = "bold", size = 12),
+    plot.subtitle      = element_text(color = "grey40", size = 9)
+  )
+
+# ══════════════════════════════════════════════════════════════════
+# PLOT 2 — slope heatmap per species, showing direction & sig
+# ══════════════════════════════════════════════════════════════════
+p2 <- ggplot(trend_stats, aes(x = season, y = species, fill = slope)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = paste0(round(slope, 2), sig)),
+            size = 2.8, color = "grey20") +
+  scale_fill_gradient2(
+    low  = "#D85A30", mid = "grey95", high = "#1D9E75",
+    midpoint = 0, name = "Trend slope\n(z/yr)"
+  ) +
+  facet_wrap(~ var, nrow = 1) +
+  labs(
+    x = NULL, y = NULL,
+    subtitle = "Annual trend slope (z-score/yr) — * p<0.05  . p<0.1"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid       = element_blank(),
+    strip.background = element_rect(fill = "grey94", color = NA),
+    strip.text       = element_text(face = "bold"),
+    axis.text.y      = element_text(face = "italic"),
+    axis.text.x      = element_text(angle = 20, hjust = 1),
+    plot.subtitle    = element_text(color = "grey40", size = 9),
+    legend.position  = "right"
+  )
+
+# ══════════════════════════════════════════════════════════════════
+# PLOT 3 — scatter of sap slope vs biomass slope per species
+# ══════════════════════════════════════════════════════════════════
+slope_wide <- trend_stats %>%
+  select(species, season, var, slope) %>%
+  pivot_wider(names_from = var, values_from = slope)
+
+p3 <- ggplot(slope_wide, aes(x = `Sap flux`, y = Biomass)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey80") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey80") +
+  geom_abline(slope = 1, intercept = 0, linetype = "dotted",
+              color = "grey60", linewidth = 0.7) +
+  geom_point(aes(color = season), size = 3, alpha = 0.8) +
+  geom_smooth(method = "lm", se = TRUE, color = "grey30",
+              linewidth = 0.8, alpha = 0.15) +
+  geom_text(data = trend_cor,
+            aes(x = -Inf, y = Inf, label = label),
+            hjust = -0.2, vjust = 1.5, size = 3.5,
+            inherit.aes = FALSE) +
+  ggrepel::geom_text_repel(aes(label = species), size = 2.8,
+                           color = "grey30", max.overlaps = 10) +
+  scale_color_manual(values = c(
+    "pre-monsoon" = "#E8593C", "monsoon" = "#1D9E75",
+    "fall"        = "#BA7517", "winter"  = "#378ADD"),
+    name = "Season") +
+  facet_wrap(~ season, nrow = 1) +
+  labs(
+    x = "Sap flux trend slope (z/yr)",
+    y = "Biomass trend slope (z/yr)",
+    subtitle = "Points above 1:1 line = biomass trending faster; r = correlation of slopes"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank(),
+    strip.background = element_rect(fill = "grey94", color = NA),
+    strip.text       = element_text(face = "bold"),
+    legend.position  = "none",
+    plot.subtitle    = element_text(color = "grey40", size = 9)
+  )
+
+# ══════════════════════════════════════════════════════════════════
+# COMBINE
+# ══════════════════════════════════════════════════════════════════
+final <- p1 / p2 / p3 +
+  plot_annotation(
+    title   = "Are sap flux and biomass trending together?",
+    caption = "Linear trends on z-normalized annual means; ggrepel required for species labels",
+    theme   = theme(plot.title = element_text(face = "bold", size = 14))
+  )
+
+ggsave("trend_sap_vs_biomass.png", final, width = 12, height = 14, dpi = 300)
+windows()
+final
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+library(tidyverse)
+library(ggplot2)
+
+# ══════════════════════════════════════════════════════════════════
+# PREP
+# ══════════════════════════════════════════════════════════════════
+sap_bio_seasonal <- sap_clim_seasonal %>%
+  filter(!is.na(species) & species != "0") %>%
+  left_join(
+    sap_clim_bio %>% distinct(species, YEAR, season, increment_kg_yr),
+    by = c("species","YEAR","season")
+  ) %>%
+  filter(!is.na(increment_kg_yr), !is.na(mean_total)) %>%
+  mutate(season = factor(season,
+                         levels = c("pre-monsoon","monsoon","fall","winter")))
+
+season_sp_summary <- sap_bio_seasonal %>%
+  group_by(species, season, YEAR) %>%
+  summarise(
+    sap = mean(mean_total,      na.rm = TRUE),
+    bio = mean(increment_kg_yr, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+wue_sum <- season_sp_summary %>%
+  mutate(wue = bio / sap) %>%
+  filter(is.finite(wue)) %>%
+  group_by(species, season) %>%
+  summarise(
+    mean_wue = mean(wue, na.rm = TRUE),
+    se_wue   = sd(wue,   na.rm = TRUE) / sqrt(n()),
+    .groups  = "drop"
+  )
+
+# ══════════════════════════════════════════════════════════════════
+# PLOT
+# ══════════════════════════════════════════════════════════════════
+pD <- ggplot(wue_sum,
+             aes(x = season, y = mean_wue, fill = species)) +
+  geom_col(position = position_dodge(0.75), width = 0.65, alpha = 0.9) +
+  geom_errorbar(aes(ymin = mean_wue - se_wue,
+                    ymax = mean_wue + se_wue),
+                position = position_dodge(0.75),
+                width = 0.25, linewidth = 0.4, color = "grey40") +
+  scale_fill_brewer(palette = "Dark2", name = "Species") +
+  scale_x_discrete(labels = c("pre-monsoon" = "Pre-monsoon",
+                              "monsoon"     = "Monsoon",
+                              "fall"        = "Fall",
+                              "winter"      = "Winter")) +
+  labs(
+    x       = NULL,
+    y       = "Biomass increment / sap flux (±SE)",
+    title   = "Growth efficiency per unit sap flux by season",
+    subtitle = "kg biomass gained per unit sap flux — which season is most efficient?",
+    caption  = "Mt Bigelow · Error bars = ±1 SE across years"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position    = "top",
+    panel.grid.minor   = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x        = element_text(size = 10),
+    plot.title         = element_text(face = "bold", size = 13),
+    plot.subtitle      = element_text(color = "grey40", size = 10),
+    plot.caption       = element_text(color = "grey50", size = 8)
+  )
+
+ggsave("growth_efficiency_seasonal.png", pD,
+       width = 8, height = 5, dpi = 300)
+windows()
+pD
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# =========================================================
+# Inspect datasets before analysis
+# =========================================================
+
+# -------------------------------
+# 1. Biomass
+# -------------------------------
+cat("===== biomass_recon_matched =====\n")
+head(biomass_recon_matched)       # first 6 rows
+str(biomass_recon_matched)        # structure & types
+summary(biomass_recon_matched)    # summary stats
+cat("\nColumn names:\n")
+colnames(biomass_recon_matched)
+
+# -------------------------------
+# 2. Seasonal sapflow
+# -------------------------------
+cat("\n===== sap_complete_season =====\n")
+head(seasonal_sapflow)
+str(seasonal_sapflow)
+summary(seasonal_sapflow)
+cat("\nColumn names:\n")
+colnames(seasonal_sapflow)
+
+# -------------------------------
+# 3. PRISM
+# -------------------------------
+cat("\n===== prism =====\n")
+head(prism)
+str(prism)
+summary(prism)
+cat("\nColumn names:\n")
+colnames(prism)
+
+##############################
+# Seasonal Sapflow & Climate Effects on Annual Biomass
+##############################
+
+# -------------------------------
+# 0. Packages
+# -------------------------------
+library(dplyr)
+library(tidyr)
+library(readr)
+library(lme4)
+library(lmerTest)
+library(sjPlot)
+library(broom.mixed)
+
+# -------------------------------
+# 1. Load PRISM
+# -------------------------------
+prism <- read_csv("//snre-snow/Projects/Babst_Lidar_treering_CLN/CLNorton/TLiDAR/MtBigelow_PRISM_2010_2021_with_seasons.csv") %>%
+  mutate(
+    date = as.Date(date),
+    season = factor(season, levels = c("pre-monsoon", "monsoon", "fall", "winter"))
+  )
+
+# Aggregate to seasonal climate per year (wide)
+prism_seasonal <- prism %>%
+  group_by(YEAR, season) %>%
+  summarise(
+    ppt_season   = sum(ppt, na.rm = TRUE),
+    vpd_season   = mean(vpdmax, na.rm = TRUE),
+    tmean_season = mean(tmean, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = season,
+    values_from = c(ppt_season, vpd_season, tmean_season),
+    names_sep = "_"
+  )
+
+# -------------------------------
+# 2. Seasonal sapflow (species-level, wide)
+# -------------------------------
+seasonal_sapflow_species <- seasonal_sapflow %>%
+  filter(Species %in% c("PIPO", "PISF", "PSME")) %>%
+  group_by(Species, YEAR, season) %>%
+  summarise(
+    seasonal_mean_sapflow = mean(seasonal_mean_sapflow, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = season,
+    values_from = seasonal_mean_sapflow,
+    names_prefix = "sap_"
+  )
+
+# -------------------------------
+# 3. Merge biomass, sapflow, and climate
+# -------------------------------
+analysis_data <- biomass_recon_matched %>%
+  rename(YEAR = Year, Biomass = Biomass_t) %>%
+  left_join(seasonal_sapflow_species, by = c("Species", "YEAR")) %>%  # use WIDE sapflow
+  left_join(prism_seasonal, by = "YEAR") %>%
+  filter(!is.na(Biomass))
+
+# -------------------------------
+# 4. Scale predictors for comparability
+# -------------------------------
+predictors <- grep("^(sap_|ppt_season_|vpd_season_|tmean_season_)", colnames(analysis_data), value = TRUE)
+analysis_data <- analysis_data %>%
+  mutate(across(all_of(predictors), scale))
+
+
+# -------------------------------
+# 5. Linear mixed-effects model
+# -------------------------------
+lme_model_biomass <- lmer(
+  Biomass ~ `sap_pre-monsoon` + sap_monsoon + sap_fall + sap_winter +
+    `ppt_season_pre-monsoon` + ppt_season_monsoon + ppt_season_fall + ppt_season_winter +
+    `vpd_season_pre-monsoon` + vpd_season_monsoon + vpd_season_fall + vpd_season_winter +
+    `tmean_season_pre-monsoon` + tmean_season_monsoon + tmean_season_fall + tmean_season_winter +
+    (1 | Species/treeID) + (1 | YEAR),
+  data = analysis_data
+)
+
+# -------------------------------
+# 6. Model summary
+# -------------------------------
+summary(lme_model_biomass)
+
+# -------------------------------
+# 7. Rank fixed effects
+# -------------------------------
+coef_table <- broom.mixed::tidy(lme_model_biomass, effects = "fixed") %>%
+  filter(grepl("sap_|ppt_season_|vpd_season_|tmean_season_", term)) %>%
+  mutate(abs_effect = abs(estimate)) %>%
+  arrange(desc(abs_effect))
+coef_table
+
+# -------------------------------
+# 8. Optional: plot fixed effects
+# -------------------------------
+windows()
+sjPlot::plot_model(lme_model_biomass, type = "est", show.values = TRUE) +
+  ggtitle("Seasonal Sapflow & Climate Effects on Annual Biomass")
+
+
+
+
+# -------------------------------
+# 5. Species-specific LME models
+# -------------------------------
+library(purrr)
+
+species_list <- c("PIPO", "PISF", "PSME")
+
+species_models <- map(species_list, function(sp) {
+  
+  sp_data <- analysis_data %>%
+    filter(Species == sp)
+  
+  lmer(
+    Biomass ~ `sap_pre-monsoon` + sap_monsoon + sap_fall + sap_winter +
+      `ppt_season_pre-monsoon` + ppt_season_monsoon + ppt_season_fall + ppt_season_winter +
+      `vpd_season_pre-monsoon` + vpd_season_monsoon + vpd_season_fall + vpd_season_winter +
+      `tmean_season_pre-monsoon` + tmean_season_monsoon + tmean_season_fall + tmean_season_winter +
+      (1 | treeID) + (1 | YEAR),
+    data = sp_data
+  )
+}) %>%
+  set_names(species_list)
+
+# -------------------------------
+# 6. Summaries
+# -------------------------------
+walk(species_list, function(sp) {
+  cat("\n========== Species:", sp, "==========\n")
+  print(summary(species_models[[sp]]))
+})
+
+# -------------------------------
+# 7. Ranked fixed effects per species
+# -------------------------------
+coef_table_species <- map_dfr(species_list, function(sp) {
+  broom.mixed::tidy(species_models[[sp]], effects = "fixed") %>%
+    filter(grepl("sap_|ppt_season_|vpd_season_|tmean_season_", term)) %>%
+    mutate(
+      Species    = sp,
+      abs_effect = abs(estimate)
+    )
+}) %>%
+  arrange(Species, desc(abs_effect))
+
+coef_table_species
+
+# -------------------------------
+# 8. Plot fixed effects per species
+# -------------------------------
+walk(species_list, function(sp) {
+  p <- sjPlot::plot_model(species_models[[sp]], type = "est", show.values = TRUE) +
+    ggtitle(paste("Seasonal Sapflow & Climate Effects on Biomass —", sp))
+  windows()
+  print(p)
+})
+
+
